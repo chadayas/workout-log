@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workout Log</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #111; color: #e0e0e0; }
+
+  /* tabs */
+  .tabs { display: flex; background: #1a1a1a; border-bottom: 2px solid #333; position: sticky; top: 0; z-index: 10; }
+  .tab-btn { flex: 1; padding: 14px 8px; text-align: center; background: none; border: none;
+             color: #888; font-size: 15px; cursor: pointer; transition: .2s; }
+  .tab-btn.active { color: #4fc3f7; border-bottom: 2px solid #4fc3f7; }
+  .tab-content { display: none; padding: 16px; max-width: 600px; margin: 0 auto; }
+  .tab-content.active { display: block; }
+
+  /* form */
+  label { display: block; margin-top: 12px; font-size: 13px; color: #aaa; }
+  input, select { width: 100%; padding: 10px; margin-top: 4px; border: 1px solid #333;
+                  border-radius: 6px; background: #1e1e1e; color: #e0e0e0; font-size: 16px; }
+  input:focus { outline: none; border-color: #4fc3f7; }
+  button { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer;
+           font-size: 15px; margin-top: 16px; transition: .2s; }
+  .btn-primary { background: #4fc3f7; color: #111; font-weight: 600; width: 100%; }
+  .btn-primary:hover { background: #39b0e4; }
+  .btn-danger { background: #e53935; color: #fff; font-size: 13px; padding: 6px 12px; margin-top: 0; }
+
+  /* table */
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  th { text-align: left; padding: 8px; color: #aaa; font-size: 13px; border-bottom: 1px solid #333; }
+  td { padding: 8px; border-bottom: 1px solid #222; font-size: 14px; }
+
+  /* weekly nav */
+  .week-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .week-nav button { margin-top: 0; background: #333; color: #e0e0e0; padding: 8px 14px; font-size: 14px; }
+  .week-label { font-size: 15px; font-weight: 600; }
+
+  /* charts */
+  .chart-container { background: #1a1a1a; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+  .summary-text { background: #1a1a1a; border-radius: 8px; padding: 14px; font-size: 14px; line-height: 1.6; }
+
+  /* status */
+  .status { margin-top: 12px; padding: 10px; border-radius: 6px; background: #1a3a1a; color: #6fbf73;
+            font-size: 14px; display: none; }
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('workout')">Log Workout</button>
+  <button class="tab-btn" onclick="switchTab('daily')">Daily Stats</button>
+  <button class="tab-btn" onclick="switchTab('weekly')">Weekly</button>
+</div>
+
+<!-- ============ LOG WORKOUT ============ -->
+<div id="tab-workout" class="tab-content active">
+  <label>Date</label>
+  <input type="date" id="ex-date">
+
+  <label>Exercise</label>
+  <input type="text" id="ex-name" placeholder="e.g. Bench Press" list="ex-names-list">
+  <datalist id="ex-names-list"></datalist>
+
+  <label>Weight (lbs)</label>
+  <input type="number" id="ex-weight" min="0" step="0.5" value="0">
+
+  <label>Reps</label>
+  <input type="number" id="ex-reps" min="0" value="0">
+
+  <label>Sets</label>
+  <input type="number" id="ex-sets" min="0" value="1">
+
+  <button class="btn-primary" onclick="addExercise()">Add Exercise</button>
+
+  <table>
+    <thead><tr><th>Exercise</th><th>Weight</th><th>Reps</th><th>Sets</th><th></th></tr></thead>
+    <tbody id="ex-table"></tbody>
+  </table>
+</div>
+
+<!-- ============ DAILY STATS ============ -->
+<div id="tab-daily" class="tab-content">
+  <label>Date</label>
+  <input type="date" id="daily-date">
+
+  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
+    <div style="font-size:14px;color:#aaa;margin-bottom:4px">Morning Weigh-In</div>
+    <label>Body Weight (lbs)</label>
+    <input type="number" id="daily-bw" min="0" step="0.1" value="0">
+    <button class="btn-primary" onclick="saveWeight()">Save Weight</button>
+    <div class="status" id="weight-status"></div>
+  </div>
+
+  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
+    <div style="font-size:14px;color:#aaa;margin-bottom:4px">Daily Calories</div>
+    <label>Calories (kcal)</label>
+    <input type="number" id="daily-cal" min="0" value="0">
+    <button class="btn-primary" onclick="saveCalories()">Save Calories</button>
+    <div class="status" id="cal-status"></div>
+  </div>
+</div>
+
+<!-- ============ WEEKLY SUMMARY ============ -->
+<div id="tab-weekly" class="tab-content">
+  <div class="week-nav">
+    <button onclick="shiftWeek(-1)">&lt; Prev</button>
+    <span class="week-label" id="week-label"></span>
+    <button onclick="shiftWeek(1)">Next &gt;</button>
+  </div>
+
+  <div class="chart-container"><canvas id="chart-weight"></canvas></div>
+  <div class="chart-container"><canvas id="chart-volume"></canvas></div>
+  <div class="chart-container"><canvas id="chart-calories"></canvas></div>
+  <div class="summary-text" id="weekly-summary"></div>
+</div>
+
+<script>
+// ---- helpers ----
+const today = () => new Date().toISOString().slice(0,10);
+const api = (url, opts) => fetch(url, opts).then(r => r.json());
+
+// ---- tab switching ----
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', b.textContent.toLowerCase().includes(name.slice(0,4))));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  if (name === 'workout') { loadExercises(); loadExerciseNames(); }
+  if (name === 'daily') loadDaily();
+  if (name === 'weekly') loadWeekly();
+}
+
+// ---- LOG WORKOUT ----
+async function loadExerciseNames() {
+  const names = await api('/api/exercise-names');
+  const dl = document.getElementById('ex-names-list');
+  dl.innerHTML = names.map(n => `<option value="${n}">`).join('');
+}
+
+async function loadExercises() {
+  const d = document.getElementById('ex-date').value;
+  const rows = await api(`/api/exercises?date=${d}`);
+  const tbody = document.getElementById('ex-table');
+  tbody.innerHTML = rows.map(r => `<tr>
+    <td>${r.exercise_name}</td><td>${r.weight_lbs}</td><td>${r.reps}</td><td>${r.sets}</td>
+    <td><button class="btn-danger" onclick="deleteExercise(${r.id})">X</button></td>
+  </tr>`).join('');
+}
+
+async function addExercise() {
+  const name = document.getElementById('ex-name').value.trim();
+  if (!name) return alert('Enter an exercise name');
+  await api('/api/exercises', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      date: document.getElementById('ex-date').value,
+      exercise_name: name,
+      weight_lbs: parseFloat(document.getElementById('ex-weight').value) || 0,
+      reps: parseInt(document.getElementById('ex-reps').value) || 0,
+      sets: parseInt(document.getElementById('ex-sets').value) || 1,
+    })
+  });
+  document.getElementById('ex-name').value = '';
+  document.getElementById('ex-weight').value = '0';
+  document.getElementById('ex-reps').value = '0';
+  document.getElementById('ex-sets').value = '1';
+  loadExercises();
+  loadExerciseNames();
+}
+
+async function deleteExercise(id) {
+  await api(`/api/exercises/${id}`, {method:'DELETE'});
+  loadExercises();
+}
+
+document.getElementById('ex-date').addEventListener('change', loadExercises);
+
+// ---- DAILY STATS ----
+async function loadDaily() {
+  const d = document.getElementById('daily-date').value;
+  const data = await api(`/api/daily?date=${d}`);
+  document.getElementById('daily-bw').value = data.body_weight_lbs || 0;
+  document.getElementById('daily-cal').value = data.calories || 0;
+  const ws = document.getElementById('weight-status');
+  const cs = document.getElementById('cal-status');
+  if (data.body_weight_lbs) { ws.style.display = 'block'; ws.textContent = `Saved: ${data.body_weight_lbs} lbs`; }
+  else { ws.style.display = 'none'; }
+  if (data.calories) { cs.style.display = 'block'; cs.textContent = `Saved: ${data.calories} kcal`; }
+  else { cs.style.display = 'none'; }
+}
+
+async function saveWeight() {
+  await api('/api/daily/weight', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      date: document.getElementById('daily-date').value,
+      body_weight_lbs: parseFloat(document.getElementById('daily-bw').value) || 0,
+    })
+  });
+  const s = document.getElementById('weight-status');
+  s.style.display = 'block';
+  s.textContent = 'Weight saved!';
+}
+
+async function saveCalories() {
+  await api('/api/daily/calories', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      date: document.getElementById('daily-date').value,
+      calories: parseInt(document.getElementById('daily-cal').value) || 0,
+    })
+  });
+  const s = document.getElementById('cal-status');
+  s.style.display = 'block';
+  s.textContent = 'Calories saved!';
+}
+
+document.getElementById('daily-date').addEventListener('change', loadDaily);
+
+// ---- WEEKLY SUMMARY ----
+let weekStart = null;
+let chartWeight = null, chartVolume = null, chartCalories = null;
+
+function getMonday() {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(d.setDate(diff)).toISOString().slice(0,10);
+}
+
+function shiftWeek(dir) {
+  const d = new Date(weekStart);
+  d.setDate(d.getDate() + dir * 7);
+  weekStart = d.toISOString().slice(0,10);
+  loadWeekly();
+}
+
+async function loadWeekly() {
+  if (!weekStart) weekStart = getMonday();
+  const data = await api(`/api/weekly?start=${weekStart}`);
+
+  // week label
+  const ws = new Date(data.week_start + 'T00:00');
+  const we = new Date(data.week_end + 'T00:00');
+  document.getElementById('week-label').textContent =
+    ws.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' – ' +
+    we.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+
+  const dayLabels = data.days.map(d => {
+    const dt = new Date(d+'T00:00');
+    return dt.toLocaleDateString('en-US',{weekday:'short'}) + ' ' +
+           dt.toLocaleDateString('en-US',{month:'numeric',day:'numeric'});
+  });
+
+  // destroy old charts
+  if (chartWeight) chartWeight.destroy();
+  if (chartVolume) chartVolume.destroy();
+  if (chartCalories) chartCalories.destroy();
+
+  const chartOpts = { responsive: true, plugins: { legend: { display: false } },
+    scales: { x: { ticks: { color: '#aaa' }, grid: { color: '#222' } },
+              y: { ticks: { color: '#aaa' }, grid: { color: '#222' } } } };
+
+  // body weight chart
+  const weights = data.daily.map(d => d.body_weight_lbs);
+  chartWeight = new Chart(document.getElementById('chart-weight'), {
+    type: 'line',
+    data: { labels: dayLabels, datasets: [{ label: 'Body Weight (lbs)', data: weights,
+      borderColor: '#4fc3f7', backgroundColor: '#4fc3f733', tension: 0.3, fill: true, spanGaps: true }] },
+    options: { ...chartOpts, plugins: { ...chartOpts.plugins, title: { display: true, text: 'Body Weight', color: '#e0e0e0' } } }
+  });
+
+  // volume chart
+  const volNames = data.volumes.map(v => v.exercise_name);
+  const volVals = data.volumes.map(v => v.volume);
+  chartVolume = new Chart(document.getElementById('chart-volume'), {
+    type: 'bar',
+    data: { labels: volNames, datasets: [{ label: 'Volume (lbs)', data: volVals,
+      backgroundColor: '#66bb6a' }] },
+    options: { indexAxis: 'y', ...chartOpts,
+      plugins: { ...chartOpts.plugins, title: { display: true, text: 'Volume per Exercise', color: '#e0e0e0' } } }
+  });
+
+  // calories chart
+  const cals = data.daily.map(d => d.calories || 0);
+  chartCalories = new Chart(document.getElementById('chart-calories'), {
+    type: 'bar',
+    data: { labels: dayLabels, datasets: [{ label: 'Calories', data: cals,
+      backgroundColor: '#ffa726' }] },
+    options: { ...chartOpts, plugins: { ...chartOpts.plugins, title: { display: true, text: 'Daily Calories', color: '#e0e0e0' } } }
+  });
+
+  // text summary
+  const validCals = cals.filter(c => c > 0);
+  const avgCal = validCals.length ? Math.round(validCals.reduce((a,b)=>a+b,0) / validCals.length) : 0;
+  const validWeights = weights.filter(w => w);
+  let weightChange = '';
+  if (validWeights.length >= 2) {
+    const diff = validWeights[validWeights.length-1] - validWeights[0];
+    weightChange = ` | Weight change: ${diff >= 0 ? '+' : ''}${diff.toFixed(1)} lbs`;
+  }
+  document.getElementById('weekly-summary').textContent =
+    `Total sets: ${data.total_sets} | Avg calories: ${avgCal} kcal${weightChange}`;
+}
+
+// ---- init ----
+document.getElementById('ex-date').value = today();
+document.getElementById('daily-date').value = today();
+loadExercises();
+loadExerciseNames();
+</script>
+</body>
+</html>
