@@ -313,17 +313,20 @@ async function loadWeekly() {
     .join(', ');
   let avgWeightText = '';
   if (data.avg_weight !== null) {
-    avgWeightText = `\nAvg weight: ${data.avg_weight} lbs`;
+    avgWeightText = `Avg weight: ${data.avg_weight} lbs`;
     if (data.prev_avg_weight !== null) {
       const diff = (data.avg_weight - data.prev_avg_weight).toFixed(1);
       const sign = diff >= 0 ? '+' : '';
       avgWeightText += ` (${sign}${diff} from last week)`;
     }
   }
-  document.getElementById('weekly-summary').textContent =
-    `Total sets: ${data.total_sets} | Avg calories: ${avgCal} kcal` +
-    (msText ? `\n${msText}` : '') +
-    avgWeightText;
+  const lines = [
+    `Total sets: ${data.total_sets}`,
+    `Avg calories: ${avgCal} kcal`,
+    msText || null,
+    avgWeightText || null,
+  ].filter(Boolean);
+  document.getElementById('weekly-summary').innerHTML = lines.join('<br>');
 }
 
 // ---- init ----
