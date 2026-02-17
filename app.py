@@ -18,7 +18,7 @@ EXERCISE_MUSCLES = {
     "barebell bicep": ["arms"],
     "tricep extension": ["arms"],
     "dips": ["chest", "arms"],
-    "squat": ["quads"],
+    "squat": ["quads","hamstrings","calves"],
     "leg press": ["quads"],
     "leg curl": ["hamstrings"],
     "romanian deadlift": ["hamstrings", "back"],
