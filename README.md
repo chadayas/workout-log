@@ -1,6 +1,6 @@
 # Workout Log
 
-A personal workout tracking web app for logging exercises, body weight, and daily calorie intake. Built with Flask and SQLite, designed to be accessed from your phone at the gym.
+A personal workout tracking web app for logging exercises, body weight, and daily calorie intake. Built with Flask and SQLite, designed to be accessed from your phone at the gym. Personal productivity app for me.
 
 ## Features
 
