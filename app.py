@@ -8,27 +8,32 @@ app = Flask(__name__)
 DB_PATH = os.path.join(os.path.expanduser("~"), "workout_log.db")
 
 EXERCISE_MUSCLES = {
-    "Bench Press": ["chest", "arms"],
-    "Incline Bench Press": ["chest", "arms"],
-    "Overhead Press": ["shoulders", "arms"],
-    "Lateral Raise": ["shoulders"],
-    "Face Pulls": ["shoulders", "back"],
-    "Bicep Curl": ["arms"],
-    "Tricep Extension": ["arms"],
-    "Squat": ["quads"],
-    "Leg Press": ["quads"],
-    "Leg Curl": ["hamstrings"],
-    "Romanian Deadlift": ["hamstrings", "back"],
-    "Deadlift": ["back", "hamstrings"],
-    "Barbell Row": ["back", "arms"],
-    "Cable Rows": ["back", "arms"],
-    "Lat Pulldown": ["back", "arms"],
-    "Pull Up": ["back", "arms"],
-    "Weighted Crunches": ["abs"],
-    "Leg Raise": ["abs"],
-    "Plank": ["abs"],
+    "bench press": ["chest", "arms"],
+    "incline bench": ["chest", "arms"],
+    "overhead press": ["shoulders", "arms"],
+    "lateral raise": ["shoulders"],
+    "face pulls": ["shoulders", "back"],
+    "delt flys": ["shoulders"],
+    "bicep curl": ["arms"],
+    "barebell bicep": ["arms"],
+    "tricep extension": ["arms"],
+    "dips": ["chest", "arms"],
+    "squat": ["quads"],
+    "leg press": ["quads"],
+    "leg curl": ["hamstrings"],
+    "romanian deadlift": ["hamstrings", "back"],
+    "deadlift": ["back", "hamstrings"],
+    "barbell row": ["back", "arms"],
+    "cable rows": ["back", "arms"],
+    "lat pulldown": ["back", "arms"],
+    "pull up": ["back", "arms"],
+    "weighted pull ups": ["back", "arms"],
+    "weighted ab crunches": ["abs"],
+    "leg raise": ["abs"],
+    "plank": ["abs"],
+    "calf raises": ["calves"],
 }
-BODY_PARTS = ["chest", "back", "shoulders", "arms", "quads", "hamstrings", "abs"]
+BODY_PARTS = ["chest", "back", "shoulders", "arms", "quads", "hamstrings", "abs", "calves"]
 
 
 def get_db():
@@ -107,7 +112,7 @@ def delete_exercise(eid):
 
 @app.route("/api/exercise-names")
 def exercise_names():
-    return jsonify(sorted(EXERCISE_MUSCLES.keys()))
+    return jsonify(sorted(k.title() for k in EXERCISE_MUSCLES))
 
 
 # ---- Daily Stats API ----
@@ -191,7 +196,7 @@ def get_weekly():
     total_sets = 0
     for r in ex_rows:
         total_sets += r["sets"]
-        parts = EXERCISE_MUSCLES.get(r["exercise_name"], [])
+        parts = EXERCISE_MUSCLES.get(r["exercise_name"].lower(), [])
         vol = r["weight_lbs"] * r["reps"] * r["sets"]
         for bp in parts:
             body_volume[bp] += vol
