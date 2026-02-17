@@ -1,10 +1,34 @@
+import os
 import sqlite3
 from datetime import date, timedelta
 
 from flask import Flask, g, jsonify, render_template, request
 
 app = Flask(__name__)
-DB_PATH = "workout_log.db"
+DB_PATH = os.path.join(os.path.expanduser("~"), "workout_log.db")
+
+EXERCISE_MUSCLES = {
+    "Bench Press": ["chest", "arms"],
+    "Incline Bench Press": ["chest", "arms"],
+    "Overhead Press": ["shoulders", "arms"],
+    "Lateral Raise": ["shoulders"],
+    "Face Pulls": ["shoulders", "back"],
+    "Bicep Curl": ["arms"],
+    "Tricep Extension": ["arms"],
+    "Squat": ["quads"],
+    "Leg Press": ["quads"],
+    "Leg Curl": ["hamstrings"],
+    "Romanian Deadlift": ["hamstrings", "back"],
+    "Deadlift": ["back", "hamstrings"],
+    "Barbell Row": ["back", "arms"],
+    "Cable Rows": ["back", "arms"],
+    "Lat Pulldown": ["back", "arms"],
+    "Pull Up": ["back", "arms"],
+    "Weighted Crunches": ["abs"],
+    "Leg Raise": ["abs"],
+    "Plank": ["abs"],
+}
+BODY_PARTS = ["chest", "back", "shoulders", "arms", "quads", "hamstrings", "abs"]
 
 
 def get_db():
@@ -83,9 +107,7 @@ def delete_exercise(eid):
 
 @app.route("/api/exercise-names")
 def exercise_names():
-    db = get_db()
-    rows = db.execute("SELECT DISTINCT exercise_name FROM exercises ORDER BY exercise_name").fetchall()
-    return jsonify([r["exercise_name"] for r in rows])
+    return jsonify(sorted(EXERCISE_MUSCLES.keys()))
 
 
 # ---- Daily Stats API ----
@@ -139,7 +161,6 @@ def get_weekly():
         today = date.today()
         ws = today - timedelta(days=today.weekday())
 
-    we = ws + timedelta(days=6)
     days = [(ws + timedelta(days=i)).isoformat() for i in range(7)]
 
     db = get_db()
@@ -158,28 +179,49 @@ def get_weekly():
         else:
             daily.append({"date": d, "calories": None, "body_weight_lbs": None})
 
-    # volume per exercise
-    vol_rows = db.execute(
-        """SELECT exercise_name, SUM(weight_lbs * reps * sets) as volume
-           FROM exercises WHERE date BETWEEN ? AND ?
-           GROUP BY exercise_name ORDER BY volume DESC""",
+    # per-exercise rows for the week
+    ex_rows = db.execute(
+        "SELECT exercise_name, weight_lbs, reps, sets FROM exercises WHERE date BETWEEN ? AND ?",
         (days[0], days[-1]),
     ).fetchall()
-    volumes = [dict(r) for r in vol_rows]
 
-    # totals
-    total_sets = db.execute(
-        "SELECT COALESCE(SUM(sets),0) as total FROM exercises WHERE date BETWEEN ? AND ?",
+    # aggregate volume and sets per body part
+    body_volume = {bp: 0 for bp in BODY_PARTS}
+    muscle_sets = {bp: 0 for bp in BODY_PARTS}
+    total_sets = 0
+    for r in ex_rows:
+        total_sets += r["sets"]
+        parts = EXERCISE_MUSCLES.get(r["exercise_name"], [])
+        vol = r["weight_lbs"] * r["reps"] * r["sets"]
+        for bp in parts:
+            body_volume[bp] += vol
+            muscle_sets[bp] += r["sets"]
+
+    # average body weight for this week and previous week
+    avg_row = db.execute(
+        "SELECT AVG(body_weight_lbs) as avg FROM daily_log WHERE date BETWEEN ? AND ? AND body_weight_lbs IS NOT NULL",
         (days[0], days[-1]),
-    ).fetchone()["total"]
+    ).fetchone()
+    avg_weight = round(avg_row["avg"], 1) if avg_row["avg"] else None
+
+    prev_start = (ws - timedelta(days=7)).isoformat()
+    prev_end = (ws - timedelta(days=1)).isoformat()
+    prev_row = db.execute(
+        "SELECT AVG(body_weight_lbs) as avg FROM daily_log WHERE date BETWEEN ? AND ? AND body_weight_lbs IS NOT NULL",
+        (prev_start, prev_end),
+    ).fetchone()
+    prev_avg_weight = round(prev_row["avg"], 1) if prev_row["avg"] else None
 
     return jsonify({
         "week_start": days[0],
         "week_end": days[-1],
         "days": days,
         "daily": daily,
-        "volumes": volumes,
+        "body_volume": body_volume,
+        "muscle_sets": muscle_sets,
         "total_sets": total_sets,
+        "avg_weight": avg_weight,
+        "prev_avg_weight": prev_avg_weight,
     })
 
 

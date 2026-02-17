@@ -62,8 +62,7 @@
   <input type="date" id="ex-date">
 
   <label>Exercise</label>
-  <input type="text" id="ex-name" placeholder="e.g. Bench Press" list="ex-names-list">
-  <datalist id="ex-names-list"></datalist>
+  <select id="ex-name"></select>
 
   <label>Weight (lbs)</label>
   <input type="number" id="ex-weight" min="0" step="0.5" value="0">
@@ -114,6 +113,7 @@
 
   <div class="chart-container"><canvas id="chart-weight"></canvas></div>
   <div class="chart-container"><canvas id="chart-volume"></canvas></div>
+  <div class="chart-container"><canvas id="chart-muscle-sets"></canvas></div>
   <div class="chart-container"><canvas id="chart-calories"></canvas></div>
   <div class="summary-text" id="weekly-summary"></div>
 </div>
@@ -135,9 +135,10 @@ function switchTab(name) {
 
 // ---- LOG WORKOUT ----
 async function loadExerciseNames() {
+  const sel = document.getElementById('ex-name');
+  if (sel.options.length > 0) return;
   const names = await api('/api/exercise-names');
-  const dl = document.getElementById('ex-names-list');
-  dl.innerHTML = names.map(n => `<option value="${n}">`).join('');
+  sel.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('');
 }
 
 async function loadExercises() {
@@ -163,12 +164,10 @@ async function addExercise() {
       sets: parseInt(document.getElementById('ex-sets').value) || 1,
     })
   });
-  document.getElementById('ex-name').value = '';
   document.getElementById('ex-weight').value = '0';
   document.getElementById('ex-reps').value = '0';
   document.getElementById('ex-sets').value = '1';
   loadExercises();
-  loadExerciseNames();
 }
 
 async function deleteExercise(id) {
@@ -222,7 +221,7 @@ document.getElementById('daily-date').addEventListener('change', loadDaily);
 
 // ---- WEEKLY SUMMARY ----
 let weekStart = null;
-let chartWeight = null, chartVolume = null, chartCalories = null;
+let chartWeight = null, chartVolume = null, chartMuscleSets = null, chartCalories = null;
 
 function getMonday() {
   const d = new Date();
@@ -258,6 +257,7 @@ async function loadWeekly() {
   // destroy old charts
   if (chartWeight) chartWeight.destroy();
   if (chartVolume) chartVolume.destroy();
+  if (chartMuscleSets) chartMuscleSets.destroy();
   if (chartCalories) chartCalories.destroy();
 
   const chartOpts = { responsive: true, plugins: { legend: { display: false } },
@@ -273,15 +273,26 @@ async function loadWeekly() {
     options: { ...chartOpts, plugins: { ...chartOpts.plugins, title: { display: true, text: 'Body Weight', color: '#e0e0e0' } } }
   });
 
-  // volume chart
-  const volNames = data.volumes.map(v => v.exercise_name);
-  const volVals = data.volumes.map(v => v.volume);
+  // volume per body part chart
+  const bpLabels = Object.keys(data.body_volume).map(bp => bp.charAt(0).toUpperCase() + bp.slice(1));
+  const bpVols = Object.values(data.body_volume);
   chartVolume = new Chart(document.getElementById('chart-volume'), {
     type: 'bar',
-    data: { labels: volNames, datasets: [{ label: 'Volume (lbs)', data: volVals,
+    data: { labels: bpLabels, datasets: [{ label: 'Volume (lbs)', data: bpVols,
       backgroundColor: '#66bb6a' }] },
     options: { indexAxis: 'y', ...chartOpts,
-      plugins: { ...chartOpts.plugins, title: { display: true, text: 'Volume per Exercise', color: '#e0e0e0' } } }
+      plugins: { ...chartOpts.plugins, title: { display: true, text: 'Volume per Body Part', color: '#e0e0e0' } } }
+  });
+
+  // sets per body part chart
+  const msLabels = Object.keys(data.muscle_sets).map(bp => bp.charAt(0).toUpperCase() + bp.slice(1));
+  const msVals = Object.values(data.muscle_sets);
+  chartMuscleSets = new Chart(document.getElementById('chart-muscle-sets'), {
+    type: 'bar',
+    data: { labels: msLabels, datasets: [{ label: 'Sets', data: msVals,
+      backgroundColor: '#ab47bc' }] },
+    options: { indexAxis: 'y', ...chartOpts,
+      plugins: { ...chartOpts.plugins, title: { display: true, text: 'Sets per Body Part', color: '#e0e0e0' } } }
   });
 
   // calories chart
@@ -296,14 +307,23 @@ async function loadWeekly() {
   // text summary
   const validCals = cals.filter(c => c > 0);
   const avgCal = validCals.length ? Math.round(validCals.reduce((a,b)=>a+b,0) / validCals.length) : 0;
-  const validWeights = weights.filter(w => w);
-  let weightChange = '';
-  if (validWeights.length >= 2) {
-    const diff = validWeights[validWeights.length-1] - validWeights[0];
-    weightChange = ` | Weight change: ${diff >= 0 ? '+' : ''}${diff.toFixed(1)} lbs`;
+  const msText = Object.entries(data.muscle_sets)
+    .filter(([,v]) => v > 0)
+    .map(([k,v]) => `${k.charAt(0).toUpperCase()+k.slice(1)}: ${v}`)
+    .join(', ');
+  let avgWeightText = '';
+  if (data.avg_weight !== null) {
+    avgWeightText = `\nAvg weight: ${data.avg_weight} lbs`;
+    if (data.prev_avg_weight !== null) {
+      const diff = (data.avg_weight - data.prev_avg_weight).toFixed(1);
+      const sign = diff >= 0 ? '+' : '';
+      avgWeightText += ` (${sign}${diff} from last week)`;
+    }
   }
   document.getElementById('weekly-summary').textContent =
-    `Total sets: ${data.total_sets} | Avg calories: ${avgCal} kcal${weightChange}`;
+    `Total sets: ${data.total_sets} | Avg calories: ${avgCal} kcal` +
+    (msText ? `\n${msText}` : '') +
+    avgWeightText;
 }
 
 // ---- init ----
