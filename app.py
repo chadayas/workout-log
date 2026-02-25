@@ -158,6 +158,33 @@ def save_calories():
     return jsonify({"ok": True})
 
 
+# ---- Weight Rolling Average API ----
+
+@app.route("/api/weight-rolling")
+def weight_rolling():
+    end = date.today()
+    start = end - timedelta(days=29)
+    db = get_db()
+    rows = db.execute(
+        "SELECT date, body_weight_lbs FROM daily_log WHERE date BETWEEN ? AND ? ORDER BY date",
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+    weight_map = {r["date"]: r["body_weight_lbs"] for r in rows}
+    dates = [(start + timedelta(days=i)).isoformat() for i in range(30)]
+    weights = [weight_map.get(d) for d in dates]
+    rolling_avg = []
+    for i in range(30):
+        window = [w for j in range(max(0, i - 6), i + 1) if (w := weights[j]) is not None]
+        rolling_avg.append(round(sum(window) / len(window), 1) if window else None)
+    current_avg = next((v for v in reversed(rolling_avg) if v is not None), None)
+    return jsonify({
+        "dates": dates,
+        "weights": weights,
+        "rolling_avg": rolling_avg,
+        "current_avg": current_avg,
+    })
+
+
 # ---- Weekly Summary API ----
 
 @app.route("/api/weekly")

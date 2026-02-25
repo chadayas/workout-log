@@ -95,6 +95,14 @@
   </div>
 
   <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:14px;color:#aaa">7-Day Rolling Avg</div>
+      <div id="rolling-avg-label" style="font-size:20px;font-weight:600;color:#4fc3f7">—</div>
+    </div>
+    <div class="chart-container" style="margin-bottom:0"><canvas id="chart-rolling-weight"></canvas></div>
+  </div>
+
+  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
     <div style="font-size:14px;color:#aaa;margin-bottom:4px">Daily Calories</div>
     <label>Calories (kcal)</label>
     <input type="number" id="daily-cal" min="0" value="0">
@@ -129,7 +137,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
   if (name === 'workout') { loadExercises(); loadExerciseNames(); }
-  if (name === 'daily') loadDaily();
+  if (name === 'daily') { loadDaily(); loadWeightRolling(); }
   if (name === 'weekly') loadWeekly();
 }
 
@@ -202,6 +210,7 @@ async function saveWeight() {
   const s = document.getElementById('weight-status');
   s.style.display = 'block';
   s.textContent = 'Weight saved!';
+  loadWeightRolling();
 }
 
 async function saveCalories() {
@@ -218,6 +227,60 @@ async function saveCalories() {
 }
 
 document.getElementById('daily-date').addEventListener('change', loadDaily);
+
+// ---- WEIGHT ROLLING AVERAGE ----
+let chartRollingWeight = null;
+
+async function loadWeightRolling() {
+  const data = await api('/api/weight-rolling');
+  document.getElementById('rolling-avg-label').textContent =
+    data.current_avg !== null ? data.current_avg + ' lbs' : '—';
+
+  const labels = data.dates.map(d => {
+    const dt = new Date(d + 'T00:00');
+    return dt.toLocaleDateString('en-US', {month: 'numeric', day: 'numeric'});
+  });
+
+  if (chartRollingWeight) chartRollingWeight.destroy();
+  const chartOpts = {
+    responsive: true,
+    scales: {
+      x: { ticks: { color: '#aaa', maxTicksLimit: 10 }, grid: { color: '#222' } },
+      y: { ticks: { color: '#aaa' }, grid: { color: '#222' } }
+    },
+    plugins: {
+      legend: { labels: { color: '#aaa' } },
+      title: { display: true, text: 'Body Weight — 30 Days', color: '#e0e0e0' }
+    }
+  };
+  chartRollingWeight = new Chart(document.getElementById('chart-rolling-weight'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Daily Weight',
+          data: data.weights,
+          borderColor: '#4fc3f7',
+          backgroundColor: 'transparent',
+          pointRadius: 4,
+          tension: 0,
+          spanGaps: false,
+        },
+        {
+          label: '7-Day Avg',
+          data: data.rolling_avg,
+          borderColor: '#ffa726',
+          backgroundColor: 'transparent',
+          pointRadius: 0,
+          tension: 0.3,
+          spanGaps: true,
+        }
+      ]
+    },
+    options: chartOpts
+  });
+}
 
 // ---- WEEKLY SUMMARY ----
 let weekStart = null;
