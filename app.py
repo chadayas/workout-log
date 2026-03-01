@@ -249,6 +249,28 @@ def get_weekly():
     ).fetchone()
     prev_avg_weight = round(prev_row["avg"], 1) if prev_row["avg"] else None
 
+    # previous week volume for chest, back, abs
+    prev_ex_rows = db.execute(
+        "SELECT exercise_name, weight_lbs, reps, sets FROM exercises WHERE date BETWEEN ? AND ?",
+        (prev_start, prev_end),
+    ).fetchall()
+    prev_body_volume = {"chest": 0, "back": 0, "abs": 0}
+    for r in prev_ex_rows:
+        parts = EXERCISE_MUSCLES.get(r["exercise_name"].lower(), [])
+        vol = r["weight_lbs"] * r["reps"] * r["sets"]
+        for bp in parts:
+            if bp in prev_body_volume:
+                prev_body_volume[bp] += vol
+
+    volume_wow = {}
+    for bp in ("chest", "back", "abs"):
+        curr = body_volume[bp]
+        prev = prev_body_volume[bp]
+        if prev > 0:
+            volume_wow[bp] = round((curr - prev) / prev * 100, 1)
+        else:
+            volume_wow[bp] = None
+
     return jsonify({
         "week_start": days[0],
         "week_end": days[-1],
@@ -259,6 +281,7 @@ def get_weekly():
         "total_sets": total_sets,
         "avg_weight": avg_weight,
         "prev_avg_weight": prev_avg_weight,
+        "volume_wow": volume_wow,
     })
 
 

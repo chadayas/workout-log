@@ -383,11 +383,21 @@ async function loadWeekly() {
       avgWeightText += ` (${sign}${diff} from last week)`;
     }
   }
+  const wowLines = ['chest', 'back', 'abs'].map(bp => {
+    const pct = data.volume_wow[bp];
+    const label = bp.charAt(0).toUpperCase() + bp.slice(1);
+    if (pct === null) return `${label} volume: no prev week data`;
+    const sign = pct >= 0 ? '+' : '';
+    const color = pct >= 0 ? '#6fbf73' : '#e57373';
+    return `${label} volume WoW: <span style="color:${color};font-weight:600">${sign}${pct}%</span>`;
+  });
   const lines = [
     `Total sets: ${data.total_sets}`,
     `Avg calories: ${avgCal} kcal`,
     msText || null,
     avgWeightText || null,
+    '<hr style="border-color:#333;margin:8px 0">',
+    ...wowLines,
   ].filter(Boolean);
   document.getElementById('weekly-summary').innerHTML = lines.join('<br>');
 }
