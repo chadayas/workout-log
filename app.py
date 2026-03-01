@@ -22,6 +22,7 @@ EXERCISE_MUSCLES = {
     "flat db press": ["chest", "arms"],
     "squat": ["quads","hamstrings","calves"],
     "leg press": ["quads"],
+    "one leg press": ["quads"],
     "leg curl": ["hamstrings"],
     "romanian deadlift": ["hamstrings", "back"],
     "deadlift": ["back", "hamstrings"],
