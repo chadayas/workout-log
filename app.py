@@ -24,6 +24,7 @@ EXERCISE_MUSCLES = {
     "leg press": ["quads"],
     "one leg press": ["quads"],
     "iso leg extension": ["quads"],
+    "leg extension": ["quads"],
     "leg curl": ["hamstrings"],
     "romanian deadlift": ["hamstrings", "back"],
     "deadlift": ["back", "hamstrings"],
