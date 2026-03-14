@@ -287,15 +287,19 @@ let weekStart = null;
 let chartWeight = null, chartVolume = null, chartMuscleSets = null, chartCalories = null;
 
 function getMonday() {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  return new Date(d.setDate(diff)).toISOString().slice(0,10);
+  const now = new Date();
+  // Build a UTC date from local date components to avoid timezone/DST drift
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const day = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - day + (day === 0 ? -6 : 1));
+  return d.toISOString().slice(0,10);
 }
 
 function shiftWeek(dir) {
-  const d = new Date(weekStart);
-  d.setDate(d.getDate() + dir * 7);
+  // Parse the date string into UTC components to avoid timezone/DST drift
+  const [y, m, day] = weekStart.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1, day));
+  d.setUTCDate(d.getUTCDate() + dir * 7);
   weekStart = d.toISOString().slice(0,10);
   loadWeekly();
 }
