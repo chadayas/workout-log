@@ -65,6 +65,12 @@ def get_db():
                 body_weight_lbs REAL
             )
         """)
+        g.db.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         g.db.commit()
     return g.db
 
@@ -159,6 +165,76 @@ def save_calories():
     )
     db.commit()
     return jsonify({"ok": True})
+
+
+# ---- Settings API ----
+
+DEFAULT_CALORIE_TARGET = 2000
+
+
+@app.route("/api/settings/calorie-target")
+def get_calorie_target():
+    db = get_db()
+    row = db.execute("SELECT value FROM settings WHERE key='calorie_target'").fetchone()
+    target = int(row["value"]) if row else DEFAULT_CALORIE_TARGET
+    return jsonify({"calorie_target": target})
+
+
+@app.route("/api/settings/calorie-target", methods=["POST"])
+def save_calorie_target():
+    data = request.get_json()
+    db = get_db()
+    db.execute(
+        """INSERT INTO settings (key, value)
+           VALUES ('calorie_target', ?)
+           ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+        (str(int(data["calorie_target"])),),
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ---- Cutting API ----
+
+@app.route("/api/cutting")
+def get_cutting():
+    end = date.today()
+    start = end - timedelta(days=29)
+    db = get_db()
+    rows = db.execute(
+        "SELECT date, calories, body_weight_lbs FROM daily_log WHERE date BETWEEN ? AND ? ORDER BY date",
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+    weight_map = {r["date"]: r["body_weight_lbs"] for r in rows}
+    cal_map = {r["date"]: r["calories"] for r in rows}
+
+    dates = [(start + timedelta(days=i)).isoformat() for i in range(30)]
+    weights = [weight_map.get(d) for d in dates]
+    calories = [cal_map.get(d) for d in dates]
+
+    rolling_avg = []
+    for i in range(30):
+        window = [w for j in range(max(0, i - 6), i + 1) if (w := weights[j]) is not None]
+        rolling_avg.append(round(sum(window) / len(window), 1) if window else None)
+    current_avg = next((v for v in reversed(rolling_avg) if v is not None), None)
+
+    target_row = db.execute("SELECT value FROM settings WHERE key='calorie_target'").fetchone()
+    target = int(target_row["value"]) if target_row else DEFAULT_CALORIE_TARGET
+
+    avg_cal_7 = None
+    recent = [c for c in calories[-7:] if c]
+    if recent:
+        avg_cal_7 = round(sum(recent) / len(recent))
+
+    return jsonify({
+        "dates": dates,
+        "weights": weights,
+        "rolling_avg": rolling_avg,
+        "current_avg": current_avg,
+        "calories": calories,
+        "calorie_target": target,
+        "avg_cal_7": avg_cal_7,
+    })
 
 
 # ---- Weight Rolling Average API ----

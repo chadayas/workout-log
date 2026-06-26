@@ -8,6 +8,7 @@ A personal workout tracking web app for logging exercises, body weight, and dail
 - **Daily Body Weight** -- Log your morning fasted weigh-in independently from calories.
 - **Daily Calories** -- Log your total calorie intake at the end of the day without overwriting your weight.
 - **Weekly Summary** -- Interactive charts showing body weight trend, training volume per exercise, and daily calorie intake. Navigate between weeks. Includes a text summary with total sets, average calories, and weight change.
+- **Cutting** -- A focused mode for a cut. Log daily calories and body weight, set an editable calorie target (lower it as you hit plateaus), and see a live deficit/surplus indicator. 30-day charts show weight with a 7-day rolling average and calories against your target line.
 
 ## Requirements
 
@@ -65,6 +66,13 @@ workout_log/
 | calories        | INTEGER | Total daily calories   |
 | body_weight_lbs | REAL    | Morning body weight    |
 
+**settings** -- Key/value app settings (e.g. the editable cutting calorie target).
+
+| Column | Type | Description                  |
+|--------|------|------------------------------|
+| key    | TEXT | Setting name (primary key)   |
+| value  | TEXT | Setting value                |
+
 ## API Endpoints
 
 | Method | Endpoint                 | Description                        |
@@ -78,6 +86,9 @@ workout_log/
 | POST   | `/api/daily/weight`      | Save body weight (won't touch calories) |
 | POST   | `/api/daily/calories`    | Save calories (won't touch weight) |
 | GET    | `/api/weekly?start=`     | Get weekly summary data            |
+| GET    | `/api/settings/calorie-target` | Get the cutting calorie target (default 2000) |
+| POST   | `/api/settings/calorie-target` | Save an editable calorie target    |
+| GET    | `/api/cutting`           | Get 30-day weight, rolling avg, calories, and target |
 
 ## Remote Access with Tailscale
 

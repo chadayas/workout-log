@@ -54,6 +54,7 @@
   <button class="tab-btn active" onclick="switchTab('workout')">Log Workout</button>
   <button class="tab-btn" onclick="switchTab('daily')">Daily Stats</button>
   <button class="tab-btn" onclick="switchTab('weekly')">Weekly</button>
+  <button class="tab-btn" onclick="switchTab('cutting')">Cutting</button>
 </div>
 
 <!-- ============ LOG WORKOUT ============ -->
@@ -126,6 +127,56 @@
   <div class="summary-text" id="weekly-summary"></div>
 </div>
 
+<!-- ============ CUTTING ============ -->
+<div id="tab-cutting" class="tab-content">
+  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:0">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:14px;color:#aaa">Daily Calorie Target</div>
+      <div id="cut-target-label" style="font-size:20px;font-weight:600;color:#ffa726">—</div>
+    </div>
+    <label>Target (kcal) — lower this during plateaus</label>
+    <input type="number" id="cut-target" min="0" step="50" value="0">
+    <button class="btn-primary" onclick="saveCutTarget()">Save Target</button>
+    <div class="status" id="cut-target-status"></div>
+  </div>
+
+  <label style="margin-top:16px">Date</label>
+  <input type="date" id="cut-date">
+
+  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
+    <div style="font-size:14px;color:#aaa;margin-bottom:4px">Morning Weigh-In</div>
+    <label>Body Weight (lbs)</label>
+    <input type="number" id="cut-bw" min="0" step="0.1" value="0">
+    <button class="btn-primary" onclick="saveCutWeight()">Save Weight</button>
+    <div class="status" id="cut-weight-status"></div>
+  </div>
+
+  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
+    <div style="font-size:14px;color:#aaa;margin-bottom:4px">Daily Calories</div>
+    <label>Calories (kcal)</label>
+    <input type="number" id="cut-cal" min="0" value="0">
+    <button class="btn-primary" onclick="saveCutCalories()">Save Calories</button>
+    <div id="cut-deficit" style="margin-top:10px;font-size:15px;font-weight:600"></div>
+    <div class="status" id="cut-cal-status"></div>
+  </div>
+
+  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:14px;color:#aaa">7-Day Avg Weight</div>
+      <div id="cut-avg-label" style="font-size:20px;font-weight:600;color:#4fc3f7">—</div>
+    </div>
+    <div class="chart-container" style="margin-bottom:0"><canvas id="cut-chart-weight"></canvas></div>
+  </div>
+
+  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:14px;color:#aaa">7-Day Avg Calories</div>
+      <div id="cut-avgcal-label" style="font-size:20px;font-weight:600;color:#ffa726">—</div>
+    </div>
+    <div class="chart-container" style="margin-bottom:0"><canvas id="cut-chart-cal"></canvas></div>
+  </div>
+</div>
+
 <script>
 // ---- helpers ----
 const today = () => new Date().toISOString().slice(0,10);
@@ -139,6 +190,7 @@ function switchTab(name) {
   if (name === 'workout') { loadExercises(); loadExerciseNames(); }
   if (name === 'daily') { loadDaily(); loadWeightRolling(); }
   if (name === 'weekly') loadWeekly();
+  if (name === 'cutting') { loadCutTarget(); loadCutDaily(); loadCutting(); }
 }
 
 // ---- LOG WORKOUT ----
@@ -406,8 +458,148 @@ async function loadWeekly() {
   document.getElementById('weekly-summary').innerHTML = lines.join('<br>');
 }
 
+// ---- CUTTING ----
+let cutChartWeight = null, cutChartCal = null;
+let cutTarget = null;
+
+async function loadCutTarget() {
+  const data = await api('/api/settings/calorie-target');
+  cutTarget = data.calorie_target;
+  document.getElementById('cut-target').value = cutTarget;
+  document.getElementById('cut-target-label').textContent = cutTarget + ' kcal';
+  updateCutDeficit();
+}
+
+async function saveCutTarget() {
+  const t = parseInt(document.getElementById('cut-target').value) || 0;
+  await api('/api/settings/calorie-target', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ calorie_target: t })
+  });
+  cutTarget = t;
+  document.getElementById('cut-target-label').textContent = t + ' kcal';
+  const s = document.getElementById('cut-target-status');
+  s.style.display = 'block';
+  s.textContent = 'Target saved!';
+  updateCutDeficit();
+  loadCutting();
+}
+
+async function loadCutDaily() {
+  const d = document.getElementById('cut-date').value;
+  const data = await api(`/api/daily?date=${d}`);
+  document.getElementById('cut-bw').value = data.body_weight_lbs || 0;
+  document.getElementById('cut-cal').value = data.calories || 0;
+  const ws = document.getElementById('cut-weight-status');
+  const cs = document.getElementById('cut-cal-status');
+  if (data.body_weight_lbs) { ws.style.display = 'block'; ws.textContent = `Saved: ${data.body_weight_lbs} lbs`; }
+  else { ws.style.display = 'none'; }
+  if (data.calories) { cs.style.display = 'block'; cs.textContent = `Saved: ${data.calories} kcal`; }
+  else { cs.style.display = 'none'; }
+  updateCutDeficit();
+}
+
+function updateCutDeficit() {
+  const el = document.getElementById('cut-deficit');
+  const cals = parseInt(document.getElementById('cut-cal').value) || 0;
+  if (!cals || cutTarget === null) { el.textContent = ''; return; }
+  const diff = cals - cutTarget;
+  if (diff <= 0) {
+    el.innerHTML = `<span style="color:#6fbf73">${-diff} kcal under target ✓</span>`;
+  } else {
+    el.innerHTML = `<span style="color:#e57373">${diff} kcal over target</span>`;
+  }
+}
+
+async function saveCutWeight() {
+  await api('/api/daily/weight', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      date: document.getElementById('cut-date').value,
+      body_weight_lbs: parseFloat(document.getElementById('cut-bw').value) || 0,
+    })
+  });
+  const s = document.getElementById('cut-weight-status');
+  s.style.display = 'block';
+  s.textContent = 'Weight saved!';
+  loadCutting();
+}
+
+async function saveCutCalories() {
+  await api('/api/daily/calories', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      date: document.getElementById('cut-date').value,
+      calories: parseInt(document.getElementById('cut-cal').value) || 0,
+    })
+  });
+  const s = document.getElementById('cut-cal-status');
+  s.style.display = 'block';
+  s.textContent = 'Calories saved!';
+  updateCutDeficit();
+  loadCutting();
+}
+
+document.getElementById('cut-date').addEventListener('change', loadCutDaily);
+document.getElementById('cut-cal').addEventListener('input', updateCutDeficit);
+
+async function loadCutting() {
+  const data = await api('/api/cutting');
+  document.getElementById('cut-avg-label').textContent =
+    data.current_avg !== null ? data.current_avg + ' lbs' : '—';
+  document.getElementById('cut-avgcal-label').textContent =
+    data.avg_cal_7 !== null ? data.avg_cal_7 + ' kcal' : '—';
+
+  const labels = data.dates.map(d => {
+    const dt = new Date(d + 'T00:00');
+    return dt.toLocaleDateString('en-US', {month: 'numeric', day: 'numeric'});
+  });
+
+  const chartOpts = {
+    responsive: true,
+    scales: {
+      x: { ticks: { color: '#aaa', maxTicksLimit: 10 }, grid: { color: '#222' } },
+      y: { ticks: { color: '#aaa' }, grid: { color: '#222' } }
+    },
+    plugins: { legend: { labels: { color: '#aaa' } } }
+  };
+
+  if (cutChartWeight) cutChartWeight.destroy();
+  cutChartWeight = new Chart(document.getElementById('cut-chart-weight'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Daily Weight', data: data.weights, borderColor: '#4fc3f7',
+          backgroundColor: 'transparent', pointRadius: 4, tension: 0, spanGaps: false },
+        { label: '7-Day Avg', data: data.rolling_avg, borderColor: '#ffa726',
+          backgroundColor: 'transparent', pointRadius: 0, tension: 0.3, spanGaps: true }
+      ]
+    },
+    options: { ...chartOpts, plugins: { ...chartOpts.plugins,
+      title: { display: true, text: 'Body Weight — 30 Days', color: '#e0e0e0' } } }
+  });
+
+  const targetLine = data.dates.map(() => data.calorie_target);
+  if (cutChartCal) cutChartCal.destroy();
+  cutChartCal = new Chart(document.getElementById('cut-chart-cal'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar', label: 'Calories', data: data.calories, backgroundColor: '#ffa726' },
+        { type: 'line', label: 'Target', data: targetLine, borderColor: '#e57373',
+          backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, borderDash: [6, 4] }
+      ]
+    },
+    options: { ...chartOpts, plugins: { ...chartOpts.plugins,
+      title: { display: true, text: 'Calories vs Target — 30 Days', color: '#e0e0e0' } } }
+  });
+}
+
 // ---- init ----
 document.getElementById('ex-date').value = today();
+document.getElementById('cut-date').value = today();
 document.getElementById('daily-date').value = today();
 loadExercises();
 loadExerciseNames();
