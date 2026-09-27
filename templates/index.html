@@ -94,6 +94,27 @@
   <label>Date</label>
   <input type="date" id="dashboard-date">
 
+  <details class="panel" id="api-setup">
+    <summary style="cursor:pointer;font-weight:600">API &amp; Custom GPT Setup</summary>
+    <label>API token (stored only in this browser)</label>
+    <input type="password" id="api-token" autocomplete="off" placeholder="WORKOUT_LOG_API_TOKEN">
+    <button class="btn-primary" onclick="saveApiToken()">Save API Token</button>
+    <div class="status" id="api-token-status"></div>
+    <div style="font-size:13px;line-height:1.55;color:#aaa;margin-top:12px">
+      <ol style="padding-left:20px">
+        <li>Run this app behind a public HTTPS Tailscale Funnel or Cloudflare Tunnel URL.</li>
+        <li>Set <code>PUBLIC_BASE_URL</code> to that HTTPS URL and <code>TRUST_PROXY=1</code>.</li>
+        <li>Import <code id="openapi-url"></code> in GPT → Configure → Actions.</li>
+        <li>Choose API Key authentication, Custom header, and header name <code>X-API-Key</code>.</li>
+        <li>Enter the same <code>WORKOUT_LOG_API_TOKEN</code> value in the GPT editor.</li>
+      </ol>
+      <div style="margin-top:8px">Suggested GPT instruction: Estimate comparable calories and
+        protein/carbs/fat for food, then call <code>logFood</code>. Use <code>logExercise</code>
+        for each set group and <code>logBodyWeight</code> for weigh-ins. Read the dashboard
+        before answering progress questions.</div>
+    </div>
+  </details>
+
   <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div class="panel-title" style="margin:0">Calories</div>
@@ -262,8 +283,11 @@
 <script>
 // ---- helpers ----
 const today = () => new Date().toISOString().slice(0,10);
-async function api(url, opts) {
-  const response = await fetch(url, opts);
+async function api(url, opts = {}) {
+  const headers = new Headers(opts.headers || {});
+  const token = localStorage.getItem('workoutLogApiToken');
+  if (token) headers.set('X-API-Key', token);
+  const response = await fetch(url, {...opts, headers});
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
@@ -279,6 +303,16 @@ function switchTab(name) {
   if (name === 'daily') { loadDaily(); loadWeightRolling(); }
   if (name === 'weekly') loadWeekly();
   if (name === 'cutting') { loadCutTarget(); loadCutDaily(); loadCutting(); }
+}
+
+function saveApiToken() {
+  const token = document.getElementById('api-token').value.trim();
+  if (token) localStorage.setItem('workoutLogApiToken', token);
+  else localStorage.removeItem('workoutLogApiToken');
+  const status = document.getElementById('api-token-status');
+  status.style.display = 'block';
+  status.textContent = token ? 'API token saved in this browser.' : 'API token cleared.';
+  loadDashboard();
 }
 
 // ---- DASHBOARD + GPT CHAT ----
@@ -857,6 +891,8 @@ async function loadCutting() {
 }
 
 // ---- init ----
+document.getElementById('api-token').value = localStorage.getItem('workoutLogApiToken') || '';
+document.getElementById('openapi-url').textContent = `${window.location.origin}/openapi.json`;
 document.getElementById('dashboard-date').value = today();
 document.getElementById('ex-date').value = today();
 document.getElementById('cut-date').value = today();
