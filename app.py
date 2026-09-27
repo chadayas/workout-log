@@ -1,6 +1,9 @@
+import json
 import os
 import sqlite3
 from datetime import date, timedelta
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from flask import Flask, g, jsonify, render_template, request
 
@@ -40,6 +43,41 @@ EXERCISE_MUSCLES = {
     "calf raises": ["calves"],
 }
 BODY_PARTS = ["chest", "back", "shoulders", "arms", "quads", "hamstrings", "abs", "calves"]
+
+GPT_ACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": {"type": "string"},
+        "actions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["food", "exercise", "weight"]},
+                    "date": {"type": "string"},
+                    "food_name": {"type": ["string", "null"]},
+                    "calories": {"type": ["integer", "null"]},
+                    "protein_g": {"type": ["number", "null"]},
+                    "carbs_g": {"type": ["number", "null"]},
+                    "fat_g": {"type": ["number", "null"]},
+                    "exercise_name": {"type": ["string", "null"]},
+                    "weight_lbs": {"type": ["number", "null"]},
+                    "reps": {"type": ["integer", "null"]},
+                    "sets": {"type": ["integer", "null"]},
+                    "body_weight_lbs": {"type": ["number", "null"]},
+                },
+                "required": [
+                    "type", "date", "food_name", "calories", "protein_g", "carbs_g",
+                    "fat_g", "exercise_name", "weight_lbs", "reps", "sets",
+                    "body_weight_lbs",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["reply", "actions"],
+    "additionalProperties": False,
+}
 
 
 def get_db():
@@ -273,6 +311,210 @@ def delete_food(food_id):
     db.execute("DELETE FROM food_entries WHERE id=?", (food_id,))
     db.commit()
     return jsonify({"ok": True})
+
+# ---- GPT Actions API ----
+
+def dashboard_context(db, log_date):
+    start_date = (date.fromisoformat(log_date) - timedelta(days=29)).isoformat()
+    daily = db.execute(
+        "SELECT body_weight_lbs FROM daily_log WHERE date=?", (log_date,)
+    ).fetchone()
+    target_row = db.execute(
+        "SELECT value FROM settings WHERE key='calorie_target'"
+    ).fetchone()
+    workouts = db.execute(
+        """SELECT date, exercise_name, weight_lbs, reps, sets
+           FROM exercises WHERE date BETWEEN ? AND ?
+           ORDER BY date DESC, id DESC LIMIT 100""",
+        (start_date, log_date),
+    ).fetchall()
+    return {
+        "selected_date": log_date,
+        "calorie_target": int(target_row["value"]) if target_row else DEFAULT_CALORIE_TARGET,
+        "nutrition": nutrition_for_date(db, log_date),
+        "body_weight_lbs": daily["body_weight_lbs"] if daily else None,
+        "recent_workouts": [dict(row) for row in workouts],
+    }
+
+
+def request_gpt_actions(message, log_date, context, history):
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured on the server")
+
+    system_prompt = f"""You are the action parser for a personal fitness log.
+The selected date is {log_date}. Turn the user's message into zero or more actions.
+For food, estimate calories, protein, carbohydrates, and fat from a comparable typical
+serving when exact nutrition is unavailable. Use the user's stated quantities.
+For lifting, weight is in pounds. Keep one action per distinct exercise/weight/reps
+combination and put the number of matching sets in sets. A message such as
+"1 set bench press at 225 for 10" means 1 set, 225 weight_lbs, and 10 reps.
+For a weigh-in, use body_weight_lbs. Use the selected date unless the user names a date.
+If required details are ambiguous, ask a concise question and return no action rather
+than inventing workout or weight data. You may answer questions using the dashboard
+context. Briefly identify food nutrition as an estimate in the reply.
+Current dashboard context: {json.dumps(context, separators=(',', ':'))}"""
+
+    input_messages = [{"role": "system", "content": system_prompt}]
+    for item in history[-10:]:
+        if (
+            isinstance(item, dict)
+            and item.get("role") in ("user", "assistant")
+            and isinstance(item.get("content"), str)
+        ):
+            input_messages.append({
+                "role": item["role"],
+                "content": item["content"][:2000],
+            })
+    input_messages.append({"role": "user", "content": message})
+
+    payload = json.dumps({
+        "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        "input": input_messages,
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "fitness_actions",
+                "strict": True,
+                "schema": GPT_ACTION_SCHEMA,
+            }
+        },
+    }).encode()
+    openai_request = Request(
+        "https://api.openai.com/v1/responses",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(openai_request, timeout=30) as response:
+            response_data = json.load(response)
+    except HTTPError as exc:
+        try:
+            detail = json.loads(exc.read()).get("error", {}).get("message")
+        except (json.JSONDecodeError, AttributeError):
+            detail = None
+        raise RuntimeError(detail or f"OpenAI request failed with status {exc.code}") from exc
+    except URLError as exc:
+        raise RuntimeError("Could not reach OpenAI") from exc
+
+    output_text = next(
+        (
+            content["text"]
+            for item in response_data.get("output", [])
+            for content in item.get("content", [])
+            if content.get("type") == "output_text"
+        ),
+        None,
+    )
+    if not output_text:
+        raise RuntimeError("OpenAI returned no usable action response")
+    try:
+        return json.loads(output_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("OpenAI returned invalid action data") from exc
+
+
+def apply_gpt_action(db, action):
+    action_type = action.get("type")
+    action_date = action.get("date")
+    try:
+        date.fromisoformat(action_date)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("GPT returned an invalid date") from exc
+
+    if action_type == "food":
+        values = (
+            action.get("calories"),
+            action.get("protein_g"),
+            action.get("carbs_g"),
+            action.get("fat_g"),
+        )
+        food_name = str(action.get("food_name") or "").strip()
+        if not food_name or any(value is None or value < 0 for value in values):
+            raise ValueError("GPT returned incomplete food data")
+        cursor = db.execute(
+            """INSERT INTO food_entries
+               (date, food_name, calories, protein_g, carbs_g, fat_g)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (action_date, food_name, *values),
+        )
+        return {
+            "type": "food",
+            "id": cursor.lastrowid,
+            "date": action_date,
+            "food_name": food_name,
+            "calories": values[0],
+            "protein_g": values[1],
+            "carbs_g": values[2],
+            "fat_g": values[3],
+        }
+
+    if action_type == "exercise":
+        exercise_name = str(action.get("exercise_name") or "").strip()
+        values = (action.get("weight_lbs"), action.get("reps"), action.get("sets"))
+        if (
+            not exercise_name
+            or any(value is None for value in values)
+            or values[0] < 0
+            or values[1] < 0
+            or values[2] < 1
+        ):
+            raise ValueError("GPT returned incomplete exercise data")
+        row = upsert_exercise(db, action_date, exercise_name, *values)
+        return {"type": "exercise", "date": action_date, **dict(row)}
+
+    if action_type == "weight":
+        body_weight_lbs = action.get("body_weight_lbs")
+        if body_weight_lbs is None or body_weight_lbs <= 0:
+            raise ValueError("GPT returned an invalid body weight")
+        db.execute(
+            """INSERT INTO daily_log (date, body_weight_lbs)
+               VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET body_weight_lbs=excluded.body_weight_lbs""",
+            (action_date, body_weight_lbs),
+        )
+        return {
+            "type": "weight",
+            "date": action_date,
+            "body_weight_lbs": body_weight_lbs,
+        }
+
+    raise ValueError("GPT returned an unknown action")
+
+
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    data = request.get_json()
+    message = str(data.get("message") or "").strip() if data else ""
+    log_date = str(data.get("date") or date.today().isoformat()) if data else date.today().isoformat()
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+    try:
+        date.fromisoformat(log_date)
+    except ValueError:
+        return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+
+    db = get_db()
+    try:
+        parsed = request_gpt_actions(
+            message,
+            log_date,
+            dashboard_context(db, log_date),
+            data.get("history") if isinstance(data.get("history"), list) else [],
+        )
+        actions = [apply_gpt_action(db, action) for action in parsed.get("actions", [])]
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return jsonify({"error": str(exc)}), 502
+    except RuntimeError as exc:
+        db.rollback()
+        return jsonify({"error": str(exc)}), 503
+    return jsonify({"reply": parsed.get("reply", "Logged."), "actions": actions})
 
 
 # ---- Daily Stats API ----
