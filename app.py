@@ -1,14 +1,20 @@
+import hmac
 import json
 import os
 import sqlite3
+import threading
 from datetime import date, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from flask import Flask, g, jsonify, render_template, request
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+if os.environ.get("TRUST_PROXY") == "1":
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 DB_PATH = os.environ.get("WORKOUT_LOG_DB", os.path.join(os.path.expanduser("~"), "workout_log.db"))
+DB_INIT_LOCK = threading.Lock()
 
 EXERCISE_MUSCLES = {
     "bench press": ["chest", "arms"],
@@ -82,9 +88,11 @@ GPT_ACTION_SCHEMA = {
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
+        g.db = sqlite3.connect(DB_PATH, timeout=30)
         g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA journal_mode=WAL")
+        g.db.execute("PRAGMA busy_timeout=30000")
+        with DB_INIT_LOCK:
+            g.db.execute("PRAGMA journal_mode=WAL")
         g.db.execute("""
             CREATE TABLE IF NOT EXISTS exercises (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,12 +170,272 @@ def close_db(exc):
     if db is not None:
         db.close()
 
+@app.before_request
+def authenticate_api():
+    if not request.path.startswith("/api/"):
+        return None
+    expected_token = os.environ.get("WORKOUT_LOG_API_TOKEN")
+    if not expected_token:
+        return jsonify({
+            "error": "WORKOUT_LOG_API_TOKEN is not configured on the server"
+        }), 503
+    supplied_token = request.headers.get("X-API-Key", "")
+    if not hmac.compare_digest(supplied_token, expected_token):
+        return jsonify({"error": "invalid or missing API token"}), 401
+    return None
+
 
 # ---- Pages ----
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
+@app.route("/openapi.json")
+def openapi_schema():
+    public_url = os.environ.get("PUBLIC_BASE_URL", request.url_root).rstrip("/")
+    date_parameter = {
+        "name": "date",
+        "in": "query",
+        "required": False,
+        "description": "Date to read in YYYY-MM-DD format; defaults to today.",
+        "schema": {"type": "string", "format": "date"},
+    }
+    error_responses = {
+        "400": {"description": "Invalid request data"},
+        "401": {"description": "Missing or invalid X-API-Key"},
+        "503": {"description": "Server API token is not configured"},
+    }
+    return jsonify({
+        "openapi": "3.1.0",
+        "info": {
+            "title": "Personal Workout and Nutrition Log",
+            "version": "1.0.0",
+            "description": (
+                "Actions for reading and updating one user's food, macros, body weight, "
+                "and strength training log."
+            ),
+        },
+        "servers": [{"url": public_url}],
+        "security": [{"ApiKeyAuth": []}],
+        "paths": {
+            "/api/foods": {
+                "post": {
+                    "operationId": "logFood",
+                    "summary": "Log one food or meal with estimated nutrition",
+                    "description": (
+                        "Estimate a comparable serving's calories and macros when the user "
+                        "does not provide exact nutrition, then log one entry."
+                    ),
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/FoodInput"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Food logged",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Created"}
+                                }
+                            },
+                        },
+                        **error_responses,
+                    },
+                }
+            },
+            "/api/exercises": {
+                "get": {
+                    "operationId": "getExercises",
+                    "summary": "Read the exercises logged for a date",
+                    "parameters": [date_parameter],
+                    "responses": {
+                        "200": {
+                            "description": "Exercise entries",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": {"$ref": "#/components/schemas/Exercise"},
+                                    }
+                                }
+                            },
+                        },
+                        **error_responses,
+                    },
+                },
+                "post": {
+                    "operationId": "logExercise",
+                    "summary": "Log strength-training sets",
+                    "description": (
+                        "Log a set group. Matching date, exercise, weight, and reps are "
+                        "merged by adding sets, so repeated 1 x 225 x 10 bench entries "
+                        "become one 2 x 225 x 10 entry."
+                    ),
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/ExerciseInput"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Exercise logged or merged",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/ExerciseResult"}
+                                }
+                            },
+                        },
+                        **error_responses,
+                    },
+                },
+            },
+            "/api/daily/weight": {
+                "post": {
+                    "operationId": "logBodyWeight",
+                    "summary": "Log or replace body weight for a date",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/WeightInput"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Body weight saved",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Ok"}
+                                }
+                            },
+                        },
+                        **error_responses,
+                    },
+                }
+            },
+            "/api/daily": {
+                "get": {
+                    "operationId": "getDailyDashboard",
+                    "summary": "Read calories, macros, and body weight for a date",
+                    "parameters": [date_parameter],
+                    "responses": {
+                        "200": {
+                            "description": "Daily dashboard values",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Daily"}
+                                }
+                            },
+                        },
+                        **error_responses,
+                    },
+                }
+            },
+        },
+        "components": {
+            "securitySchemes": {
+                "ApiKeyAuth": {
+                    "type": "apiKey",
+                    "in": "header",
+                    "name": "X-API-Key",
+                }
+            },
+            "schemas": {
+                "FoodInput": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "date", "food_name", "calories", "protein_g", "carbs_g", "fat_g"
+                    ],
+                    "properties": {
+                        "date": {"type": "string", "format": "date"},
+                        "food_name": {"type": "string"},
+                        "calories": {"type": "integer", "minimum": 0},
+                        "protein_g": {"type": "number", "minimum": 0},
+                        "carbs_g": {"type": "number", "minimum": 0},
+                        "fat_g": {"type": "number", "minimum": 0},
+                    },
+                },
+                "ExerciseInput": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["date", "exercise_name", "weight_lbs", "reps", "sets"],
+                    "properties": {
+                        "date": {"type": "string", "format": "date"},
+                        "exercise_name": {"type": "string"},
+                        "weight_lbs": {"type": "number", "minimum": 0},
+                        "reps": {"type": "integer", "minimum": 0},
+                        "sets": {"type": "integer", "minimum": 1},
+                    },
+                },
+                "WeightInput": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["date", "body_weight_lbs"],
+                    "properties": {
+                        "date": {"type": "string", "format": "date"},
+                        "body_weight_lbs": {"type": "number", "exclusiveMinimum": 0},
+                    },
+                },
+                "Exercise": {
+                    "type": "object",
+                    "required": ["id", "exercise_name", "weight_lbs", "reps", "sets"],
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "exercise_name": {"type": "string"},
+                        "weight_lbs": {"type": "number"},
+                        "reps": {"type": "integer"},
+                        "sets": {"type": "integer"},
+                    },
+                },
+                "Daily": {
+                    "type": "object",
+                    "required": [
+                        "calories", "body_weight_lbs", "protein_g", "carbs_g", "fat_g",
+                        "food_entry_count",
+                    ],
+                    "properties": {
+                        "calories": {"type": ["integer", "null"]},
+                        "body_weight_lbs": {"type": ["number", "null"]},
+                        "protein_g": {"type": "number"},
+                        "carbs_g": {"type": "number"},
+                        "fat_g": {"type": "number"},
+                        "food_entry_count": {"type": "integer"},
+                    },
+                },
+                "Ok": {
+                    "type": "object",
+                    "required": ["ok"],
+                    "properties": {"ok": {"type": "boolean"}},
+                },
+                "Created": {
+                    "type": "object",
+                    "required": ["ok", "id"],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "id": {"type": "integer"},
+                    },
+                },
+                "ExerciseResult": {
+                    "type": "object",
+                    "required": ["ok", "exercise"],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "exercise": {"$ref": "#/components/schemas/Exercise"},
+                    },
+                },
+            },
+        },
+    })
 
 
 # ---- Exercise API ----
@@ -541,12 +809,22 @@ def get_daily():
 @app.route("/api/daily/weight", methods=["POST"])
 def save_weight():
     data = request.get_json()
+    if not data or "date" not in data or "body_weight_lbs" not in data:
+        return jsonify({"error": "date and body_weight_lbs are required"}), 400
+    try:
+        date.fromisoformat(data["date"])
+        body_weight_lbs = float(data["body_weight_lbs"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid body weight or date"}), 400
+    if body_weight_lbs <= 0:
+        return jsonify({"error": "body_weight_lbs must be positive"}), 400
+
     db = get_db()
     db.execute(
         """INSERT INTO daily_log (date, body_weight_lbs)
            VALUES (?, ?)
            ON CONFLICT(date) DO UPDATE SET body_weight_lbs=excluded.body_weight_lbs""",
-        (data["date"], data["body_weight_lbs"]),
+        (data["date"], body_weight_lbs),
     )
     db.commit()
     return jsonify({"ok": True})
@@ -779,4 +1057,8 @@ def get_weekly():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "5000")),
+        debug=os.environ.get("FLASK_DEBUG") == "1",
+    )
