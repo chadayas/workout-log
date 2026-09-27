@@ -47,7 +47,7 @@
   .status { margin-top: 12px; padding: 10px; border-radius: 6px; background: #1a3a1a; color: #6fbf73;
             font-size: 14px; display: none; }
 
-  /* dashboard and chat */
+  /* dashboard */
   .dashboard-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
   .metric { background: #1a1a1a; border-radius: 8px; padding: 12px; }
   .metric-label { color: #999; font-size: 12px; }
@@ -56,22 +56,7 @@
   .progress-fill { height: 100%; width: 0; background: #4fc3f7; transition: width .2s; }
   .panel { background: #1a1a1a; border-radius: 8px; padding: 14px; margin-top: 14px; }
   .panel-title { color: #aaa; font-size: 14px; margin-bottom: 8px; }
-  .chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto;
-              margin-bottom: 10px; }
-  .chat-empty { color: #777; font-size: 14px; }
-  .chat-bubble { max-width: 88%; padding: 9px 11px; border-radius: 10px; line-height: 1.35;
-                 white-space: pre-wrap; font-size: 14px; }
-  .chat-bubble.user { align-self: flex-end; background: #0d5270; }
-  .chat-bubble.assistant { align-self: flex-start; background: #292929; }
-  .chat-compose { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
-  textarea { width: 100%; min-height: 72px; resize: vertical; padding: 10px; border: 1px solid #333;
-             border-radius: 6px; background: #1e1e1e; color: #e0e0e0; font: inherit; }
-  textarea:focus { outline: none; border-color: #4fc3f7; }
-  .mic-btn { width: 48px; height: 48px; margin: 0; padding: 0; background: #333; color: #fff;
-             font-size: 20px; }
-  .mic-btn.listening { background: #e53935; }
-  .chat-send { margin-top: 8px; }
-  .chat-error { color: #ef9a9a; font-size: 13px; margin-top: 8px; min-height: 18px; }
+  .dashboard-error { color: #ef9a9a; font-size: 13px; margin-top: 8px; min-height: 18px; }
   .compact-table td, .compact-table th { padding: 7px 5px; }
   @media (max-width: 420px) {
     .tabs { overflow-x: auto; }
@@ -86,10 +71,9 @@
   <button class="tab-btn" onclick="switchTab('workout')">Log Workout</button>
   <button class="tab-btn" onclick="switchTab('daily')">Daily Stats</button>
   <button class="tab-btn" onclick="switchTab('weekly')">Weekly</button>
-  <button class="tab-btn" onclick="switchTab('cutting')">Cutting</button>
 </div>
 
-<!-- ============ DASHBOARD + GPT CHAT ============ -->
+<!-- ============ DASHBOARD ============ -->
 <div id="tab-dashboard" class="tab-content active">
   <label>Date</label>
   <input type="date" id="dashboard-date">
@@ -114,6 +98,7 @@
         before answering progress questions.</div>
     </div>
   </details>
+  <div id="dashboard-error" class="dashboard-error"></div>
 
   <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center">
@@ -130,18 +115,6 @@
     <div class="metric"><div class="metric-label">Body Weight</div><div id="dashboard-weight" class="metric-value">—</div></div>
   </div>
 
-  <div class="panel">
-    <div class="panel-title">GPT Fitness Log</div>
-    <div id="chat-log" class="chat-log">
-      <div class="chat-empty">Try “I ate a chicken burrito bowl” or “1 set bench press at 225 for 10.”</div>
-    </div>
-    <div class="chat-compose">
-      <textarea id="chat-input" placeholder="Log food, weight, or a workout…" enterkeyhint="send"></textarea>
-      <button id="mic-button" class="mic-btn" onclick="toggleVoice()" aria-label="Log by voice" title="Log by voice">Mic</button>
-    </div>
-    <button id="chat-send" class="btn-primary chat-send" onclick="sendChat()">Send</button>
-    <div id="chat-error" class="chat-error"></div>
-  </div>
 
   <div class="panel">
     <div class="panel-title">Food</div>
@@ -230,55 +203,6 @@
   <div class="summary-text" id="weekly-summary"></div>
 </div>
 
-<!-- ============ CUTTING ============ -->
-<div id="tab-cutting" class="tab-content">
-  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:0">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="font-size:14px;color:#aaa">Daily Calorie Target</div>
-      <div id="cut-target-label" style="font-size:20px;font-weight:600;color:#ffa726">—</div>
-    </div>
-    <label>Target (kcal) — lower this during plateaus</label>
-    <input type="number" id="cut-target" min="0" step="50" value="0">
-    <button class="btn-primary" onclick="saveCutTarget()">Save Target</button>
-    <div class="status" id="cut-target-status"></div>
-  </div>
-
-  <label style="margin-top:16px">Date</label>
-  <input type="date" id="cut-date">
-
-  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
-    <div style="font-size:14px;color:#aaa;margin-bottom:4px">Morning Weigh-In</div>
-    <label>Body Weight (lbs)</label>
-    <input type="number" id="cut-bw" min="0" step="0.1" value="0">
-    <button class="btn-primary" onclick="saveCutWeight()">Save Weight</button>
-    <div class="status" id="cut-weight-status"></div>
-  </div>
-
-  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
-    <div style="font-size:14px;color:#aaa;margin-bottom:4px">Daily Calories</div>
-    <label>Calories (kcal)</label>
-    <input type="number" id="cut-cal" min="0" value="0">
-    <button class="btn-primary" onclick="saveCutCalories()">Save Calories</button>
-    <div id="cut-deficit" style="margin-top:10px;font-size:15px;font-weight:600"></div>
-    <div class="status" id="cut-cal-status"></div>
-  </div>
-
-  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="font-size:14px;color:#aaa">7-Day Avg Weight</div>
-      <div id="cut-avg-label" style="font-size:20px;font-weight:600;color:#4fc3f7">—</div>
-    </div>
-    <div class="chart-container" style="margin-bottom:0"><canvas id="cut-chart-weight"></canvas></div>
-  </div>
-
-  <div style="background:#1a1a1a;border-radius:8px;padding:14px;margin-top:16px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="font-size:14px;color:#aaa">7-Day Avg Calories</div>
-      <div id="cut-avgcal-label" style="font-size:20px;font-weight:600;color:#ffa726">—</div>
-    </div>
-    <div class="chart-container" style="margin-bottom:0"><canvas id="cut-chart-cal"></canvas></div>
-  </div>
-</div>
 
 <script>
 // ---- helpers ----
@@ -306,7 +230,6 @@ function switchTab(name) {
   if (name === 'workout') { loadExercises(); loadExerciseNames(); }
   if (name === 'daily') { loadDaily(); loadWeightRolling(); }
   if (name === 'weekly') loadWeekly();
-  if (name === 'cutting') { loadCutTarget(); loadCutDaily(); loadCutting(); }
 }
 
 function saveApiToken() {
@@ -319,23 +242,9 @@ function saveApiToken() {
   loadDashboard();
 }
 
-// ---- DASHBOARD + GPT CHAT ----
-let chatHistory = [];
-let speechRecognition = null;
-
+// ---- DASHBOARD ----
 function displayNumber(value) {
   return Number(value || 0).toLocaleString(undefined, {maximumFractionDigits: 1});
-}
-
-function appendChatMessage(role, content) {
-  const log = document.getElementById('chat-log');
-  const empty = log.querySelector('.chat-empty');
-  if (empty) empty.remove();
-  const bubble = document.createElement('div');
-  bubble.className = `chat-bubble ${role}`;
-  bubble.textContent = content;
-  log.appendChild(bubble);
-  log.scrollTop = log.scrollHeight;
 }
 
 async function loadDashboard() {
@@ -398,9 +307,9 @@ async function loadDashboard() {
         workoutBody.appendChild(row);
       }
     }
-    document.getElementById('chat-error').textContent = '';
+    document.getElementById('dashboard-error').textContent = '';
   } catch (error) {
-    document.getElementById('chat-error').textContent = error.message;
+    document.getElementById('dashboard-error').textContent = error.message;
   }
 }
 
@@ -409,86 +318,12 @@ async function deleteFood(id) {
     await api(`/api/foods/${id}`, {method: 'DELETE'});
     loadDashboard();
   } catch (error) {
-    document.getElementById('chat-error').textContent = error.message;
+    document.getElementById('dashboard-error').textContent = error.message;
   }
 }
 
-async function sendChat() {
-  const input = document.getElementById('chat-input');
-  const message = input.value.trim();
-  if (!message) return;
-  const sendButton = document.getElementById('chat-send');
-  const priorHistory = chatHistory.slice(-10);
-  chatHistory.push({role: 'user', content: message});
-  appendChatMessage('user', message);
-  input.value = '';
-  sendButton.disabled = true;
-  sendButton.textContent = 'Working…';
-  document.getElementById('chat-error').textContent = '';
-  try {
-    const result = await api('/api/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        message,
-        date: document.getElementById('dashboard-date').value,
-        history: priorHistory,
-      }),
-    });
-    chatHistory.push({role: 'assistant', content: result.reply});
-    appendChatMessage('assistant', result.reply);
-    await loadDashboard();
-  } catch (error) {
-    document.getElementById('chat-error').textContent = error.message;
-    appendChatMessage('assistant', `Could not log that: ${error.message}`);
-  } finally {
-    sendButton.disabled = false;
-    sendButton.textContent = 'Send';
-  }
-}
-
-function toggleVoice() {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const error = document.getElementById('chat-error');
-  if (!Recognition) {
-    error.textContent = 'Voice input is not supported by this browser. You can still type the entry.';
-    return;
-  }
-  if (speechRecognition) {
-    speechRecognition.stop();
-    return;
-  }
-  speechRecognition = new Recognition();
-  speechRecognition.lang = 'en-US';
-  speechRecognition.interimResults = false;
-  speechRecognition.maxAlternatives = 1;
-  const mic = document.getElementById('mic-button');
-  mic.classList.add('listening');
-  mic.textContent = 'Stop';
-  error.textContent = 'Listening…';
-  speechRecognition.onresult = event => {
-    document.getElementById('chat-input').value = event.results[0][0].transcript;
-    error.textContent = '';
-    sendChat();
-  };
-  speechRecognition.onerror = event => {
-    error.textContent = `Voice input failed: ${event.error}`;
-  };
-  speechRecognition.onend = () => {
-    speechRecognition = null;
-    mic.classList.remove('listening');
-    mic.textContent = 'Mic';
-  };
-  speechRecognition.start();
-}
 
 document.getElementById('dashboard-date').addEventListener('change', loadDashboard);
-document.getElementById('chat-input').addEventListener('keydown', event => {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault();
-    sendChat();
-  }
-});
 
 // ---- LOG WORKOUT ----
 async function loadExerciseNames() {
@@ -755,151 +590,12 @@ async function loadWeekly() {
   document.getElementById('weekly-summary').innerHTML = lines.join('<br>');
 }
 
-// ---- CUTTING ----
-let cutChartWeight = null, cutChartCal = null;
-let cutTarget = null;
-
-async function loadCutTarget() {
-  const data = await api('/api/settings/calorie-target');
-  cutTarget = data.calorie_target;
-  document.getElementById('cut-target').value = cutTarget;
-  document.getElementById('cut-target-label').textContent = cutTarget + ' kcal';
-  updateCutDeficit();
-}
-
-async function saveCutTarget() {
-  const t = parseInt(document.getElementById('cut-target').value) || 0;
-  await api('/api/settings/calorie-target', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ calorie_target: t })
-  });
-  cutTarget = t;
-  document.getElementById('cut-target-label').textContent = t + ' kcal';
-  const s = document.getElementById('cut-target-status');
-  s.style.display = 'block';
-  s.textContent = 'Target saved!';
-  updateCutDeficit();
-  loadCutting();
-}
-
-async function loadCutDaily() {
-  const d = document.getElementById('cut-date').value;
-  const data = await api(`/api/daily?date=${d}`);
-  document.getElementById('cut-bw').value = data.body_weight_lbs || 0;
-  document.getElementById('cut-cal').value = data.calories || 0;
-  const ws = document.getElementById('cut-weight-status');
-  const cs = document.getElementById('cut-cal-status');
-  if (data.body_weight_lbs) { ws.style.display = 'block'; ws.textContent = `Saved: ${data.body_weight_lbs} lbs`; }
-  else { ws.style.display = 'none'; }
-  if (data.calories) { cs.style.display = 'block'; cs.textContent = `Saved: ${data.calories} kcal`; }
-  else { cs.style.display = 'none'; }
-  updateCutDeficit();
-}
-
-function updateCutDeficit() {
-  const el = document.getElementById('cut-deficit');
-  const cals = parseInt(document.getElementById('cut-cal').value) || 0;
-  if (!cals || cutTarget === null) { el.textContent = ''; return; }
-  const diff = cals - cutTarget;
-  if (diff <= 0) {
-    el.innerHTML = `<span style="color:#6fbf73">${-diff} kcal under target ✓</span>`;
-  } else {
-    el.innerHTML = `<span style="color:#e57373">${diff} kcal over target</span>`;
-  }
-}
-
-async function saveCutWeight() {
-  await api('/api/daily/weight', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      date: document.getElementById('cut-date').value,
-      body_weight_lbs: parseFloat(document.getElementById('cut-bw').value) || 0,
-    })
-  });
-  const s = document.getElementById('cut-weight-status');
-  s.style.display = 'block';
-  s.textContent = 'Weight saved!';
-  loadCutting();
-}
-
-async function saveCutCalories() {
-  await api('/api/daily/calories', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      date: document.getElementById('cut-date').value,
-      calories: parseInt(document.getElementById('cut-cal').value) || 0,
-    })
-  });
-  const s = document.getElementById('cut-cal-status');
-  s.style.display = 'block';
-  s.textContent = 'Calories saved!';
-  updateCutDeficit();
-  loadCutting();
-}
-
-document.getElementById('cut-date').addEventListener('change', loadCutDaily);
-document.getElementById('cut-cal').addEventListener('input', updateCutDeficit);
-
-async function loadCutting() {
-  const data = await api('/api/cutting');
-  document.getElementById('cut-avg-label').textContent =
-    data.current_avg !== null ? data.current_avg + ' lbs' : '—';
-  document.getElementById('cut-avgcal-label').textContent =
-    data.avg_cal_7 !== null ? data.avg_cal_7 + ' kcal' : '—';
-
-  const labels = data.dates.map(d => {
-    const dt = new Date(d + 'T00:00');
-    return dt.toLocaleDateString('en-US', {month: 'numeric', day: 'numeric'});
-  });
-
-  const chartOpts = {
-    responsive: true,
-    scales: {
-      x: { ticks: { color: '#aaa', maxTicksLimit: 10 }, grid: { color: '#222' } },
-      y: { ticks: { color: '#aaa' }, grid: { color: '#222' } }
-    },
-    plugins: { legend: { labels: { color: '#aaa' } } }
-  };
-
-  if (cutChartWeight) cutChartWeight.destroy();
-  cutChartWeight = new Chart(document.getElementById('cut-chart-weight'), {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Daily Weight', data: data.weights, borderColor: '#4fc3f7',
-          backgroundColor: 'transparent', pointRadius: 4, tension: 0, spanGaps: false },
-        { label: '7-Day Avg', data: data.rolling_avg, borderColor: '#ffa726',
-          backgroundColor: 'transparent', pointRadius: 0, tension: 0.3, spanGaps: true }
-      ]
-    },
-    options: { ...chartOpts, plugins: { ...chartOpts.plugins,
-      title: { display: true, text: 'Body Weight — 30 Days', color: '#e0e0e0' } } }
-  });
-
-  const targetLine = data.dates.map(() => data.calorie_target);
-  if (cutChartCal) cutChartCal.destroy();
-  cutChartCal = new Chart(document.getElementById('cut-chart-cal'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { type: 'bar', label: 'Calories', data: data.calories, backgroundColor: '#ffa726' },
-        { type: 'line', label: 'Target', data: targetLine, borderColor: '#e57373',
-          backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, borderDash: [6, 4] }
-      ]
-    },
-    options: { ...chartOpts, plugins: { ...chartOpts.plugins,
-      title: { display: true, text: 'Calories vs Target — 30 Days', color: '#e0e0e0' } } }
-  });
-}
 
 // ---- init ----
 document.getElementById('api-token').value = localStorage.getItem('workoutLogApiToken') || '';
 document.getElementById('openapi-url').textContent = `${window.location.origin}/openapi.json`;
 document.getElementById('dashboard-date').value = today();
 document.getElementById('ex-date').value = today();
-document.getElementById('cut-date').value = today();
 document.getElementById('daily-date').value = today();
 loadDashboard();
 loadExerciseNames();

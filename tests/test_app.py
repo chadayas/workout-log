@@ -87,95 +87,46 @@ class WorkoutLogTestCase(unittest.TestCase):
             2600,
         )
 
-    def test_chat_logs_food_weight_and_merges_matching_sets(self):
-        first_actions = {
-            "reply": "Logged your meal, weigh-in, and bench set.",
-            "actions": [
-                {
-                    "type": "food",
-                    "date": "2026-09-25",
-                    "food_name": "Greek yogurt",
-                    "calories": 180,
-                    "protein_g": 20,
-                    "carbs_g": 16,
-                    "fat_g": 4,
-                },
-                {
-                    "type": "exercise",
-                    "date": "2026-09-25",
-                    "exercise_name": "bench press",
-                    "weight_lbs": 225,
-                    "reps": 10,
-                    "sets": 1,
-                },
-                {
-                    "type": "weight",
-                    "date": "2026-09-25",
-                    "body_weight_lbs": 184.2,
-                },
-            ],
+    def test_action_endpoints_log_weight_and_merge_matching_sets(self):
+        exercise = {
+            "date": "2026-09-25",
+            "exercise_name": "bench press",
+            "weight_lbs": 225,
+            "reps": 10,
+            "sets": 1,
         }
-        second_actions = {
-            "reply": "Added another matching bench set.",
-            "actions": [first_actions["actions"][1]],
-        }
+        first = self.client.post("/api/exercises", json=exercise)
+        second = self.client.post("/api/exercises", json=exercise)
+        weight = self.client.post(
+            "/api/daily/weight",
+            json={"date": "2026-09-25", "body_weight_lbs": 184.2},
+        )
 
-        with patch.object(
-            workout_app,
-            "request_gpt_actions",
-            side_effect=[first_actions, second_actions],
-        ):
-            first = self.client.post(
-                "/api/chat",
-                json={"date": "2026-09-25", "message": "Log my meal, weight, and set"},
-            )
-            second = self.client.post(
-                "/api/chat",
-                json={"date": "2026-09-25", "message": "Same bench set again"},
-            )
-
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(weight.status_code, 200)
         exercises = self.client.get("/api/exercises?date=2026-09-25").get_json()
         self.assertEqual(len(exercises), 1)
         self.assertEqual(exercises[0]["exercise_name"], "Bench Press")
         self.assertEqual(exercises[0]["sets"], 2)
         daily = self.client.get("/api/daily?date=2026-09-25").get_json()
         self.assertEqual(daily["body_weight_lbs"], 184.2)
-        self.assertEqual(daily["calories"], 180)
 
-    def test_invalid_chat_action_rolls_back_every_action(self):
-        parsed = {
-            "reply": "",
-            "actions": [
-                {
-                    "type": "food",
-                    "date": "2026-09-25",
-                    "food_name": "Apple",
-                    "calories": 95,
-                    "protein_g": 0.5,
-                    "carbs_g": 25,
-                    "fat_g": 0.3,
-                },
-                {
-                    "type": "exercise",
-                    "date": "2026-09-25",
-                    "exercise_name": "bench press",
-                    "weight_lbs": 225,
-                    "reps": 10,
-                    "sets": 0,
-                },
-            ],
-        }
-        with patch.object(workout_app, "request_gpt_actions", return_value=parsed):
-            response = self.client.post(
-                "/api/chat",
-                json={"date": "2026-09-25", "message": "bad batch"},
-            )
+    def test_invalid_exercise_is_not_logged(self):
+        response = self.client.post(
+            "/api/exercises",
+            json={
+                "date": "2026-09-25",
+                "exercise_name": "bench press",
+                "weight_lbs": 225,
+                "reps": 10,
+                "sets": 0,
+            },
+        )
 
-        self.assertEqual(response.status_code, 502)
-        foods = self.client.get("/api/foods?date=2026-09-25").get_json()
-        self.assertEqual(foods["entries"], [])
+        self.assertEqual(response.status_code, 400)
+        exercises = self.client.get("/api/exercises?date=2026-09-25").get_json()
+        self.assertEqual(exercises, [])
 
 
 if __name__ == "__main__":

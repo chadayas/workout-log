@@ -25,9 +25,8 @@ The Dashboard tab displays data for the selected date, including:
 - Body weight
 - Food entries
 - Workout entries
-- The in-app GPT chat and microphone control
 
-Body weight appears in the **Body Weight** card near the top of the Dashboard when the selected date matches the weigh-in date. It also appears in the Daily Stats and Cutting sections.
+Body weight appears in the **Body Weight** card near the top of the Dashboard when the selected date matches the weigh-in date. It also appears in Daily Stats.
 
 A `202.6 lbs` body-weight entry currently exists for `2026-09-26`.
 
@@ -46,7 +45,7 @@ Each food entry stores:
 - Fat in grams
 - Date
 
-The default daily calorie target is 2,600 kcal and can be lowered from the Cutting section.
+The default daily calorie target is 2,600 kcal.
 
 ### Workouts
 
@@ -98,23 +97,9 @@ The remaining user step is to create a Custom GPT, import `https://chadyap.com/o
 
 Once configured, the same Custom GPT will be available from the ChatGPT website and mobile app when signed into the same ChatGPT account.
 
-### In-app GPT chat
+### Removed interfaces
 
-The dashboard includes a GPT chat box and browser speech-recognition control. The in-app chat requires an `OPENAI_API_KEY` in `/etc/workout-log.env`.
-
-No OpenAI API key was added during deployment because no key was provided. Custom GPT Actions do not need this key; only the chat embedded in the dashboard needs it.
-
-To enable the embedded chat later, add this line to `/etc/workout-log.env` on the server:
-
-```ini
-OPENAI_API_KEY=your-key
-```
-
-Then restart the service:
-
-```bash
-systemctl restart workout-log
-```
+The dashboard's embedded GPT chat, microphone, and Send button were removed in favor of using Custom GPT from the ChatGPT mobile app or website. The Cutting tab was also removed. The dashboard, manual workout and daily-stat forms, weekly charts, and authenticated Custom GPT Actions remain available.
 
 ## Production architecture
 
