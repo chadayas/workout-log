@@ -57,6 +57,35 @@ def get_db():
                 sets INTEGER NOT NULL
             )
         """)
+        g.db.execute("UPDATE exercises SET exercise_name=TRIM(exercise_name)")
+        duplicate_groups = g.db.execute(
+            """SELECT date, exercise_name, weight_lbs, reps,
+                      MIN(id) AS keeper_id, SUM(sets) AS total_sets
+               FROM exercises
+               GROUP BY date, exercise_name COLLATE NOCASE, weight_lbs, reps
+               HAVING COUNT(*) > 1"""
+        ).fetchall()
+        for group in duplicate_groups:
+            g.db.execute(
+                "UPDATE exercises SET sets=? WHERE id=?",
+                (group["total_sets"], group["keeper_id"]),
+            )
+            g.db.execute(
+                """DELETE FROM exercises
+                   WHERE date=? AND exercise_name=? COLLATE NOCASE
+                     AND weight_lbs=? AND reps=? AND id<>?""",
+                (
+                    group["date"],
+                    group["exercise_name"],
+                    group["weight_lbs"],
+                    group["reps"],
+                    group["keeper_id"],
+                ),
+            )
+        g.db.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_exercises_same_set
+               ON exercises(date, exercise_name COLLATE NOCASE, weight_lbs, reps)"""
+        )
         g.db.execute("""
             CREATE TABLE IF NOT EXISTS daily_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,6 +134,24 @@ def index():
 
 # ---- Exercise API ----
 
+def upsert_exercise(db, log_date, exercise_name, weight_lbs, reps, sets):
+    normalized_name = exercise_name.strip().title()
+    db.execute(
+        """INSERT INTO exercises (date, exercise_name, weight_lbs, reps, sets)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(date, exercise_name COLLATE NOCASE, weight_lbs, reps)
+           DO UPDATE SET sets=exercises.sets + excluded.sets""",
+        (log_date, normalized_name, weight_lbs, reps, sets),
+    )
+    return db.execute(
+        """SELECT id, exercise_name, weight_lbs, reps, sets
+           FROM exercises
+           WHERE date=? AND exercise_name=? COLLATE NOCASE
+             AND weight_lbs=? AND reps=?""",
+        (log_date, normalized_name, weight_lbs, reps),
+    ).fetchone()
+
+
 @app.route("/api/exercises")
 def get_exercises():
     d = request.args.get("date", date.today().isoformat())
@@ -119,13 +166,24 @@ def get_exercises():
 @app.route("/api/exercises", methods=["POST"])
 def add_exercise():
     data = request.get_json()
+    required = ("date", "exercise_name", "weight_lbs", "reps", "sets")
+    if not data or any(key not in data for key in required):
+        return jsonify({"error": "date, exercise_name, weight_lbs, reps, and sets are required"}), 400
+    try:
+        date.fromisoformat(data["date"])
+        weight_lbs = float(data["weight_lbs"])
+        reps = int(data["reps"])
+        sets = int(data["sets"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid exercise values or date"}), 400
+    exercise_name = str(data["exercise_name"]).strip()
+    if not exercise_name or min(weight_lbs, reps) < 0 or sets < 1:
+        return jsonify({"error": "exercise values must be non-negative and sets must be positive"}), 400
+
     db = get_db()
-    db.execute(
-        "INSERT INTO exercises (date, exercise_name, weight_lbs, reps, sets) VALUES (?,?,?,?,?)",
-        (data["date"], data["exercise_name"], data["weight_lbs"], data["reps"], data["sets"]),
-    )
+    row = upsert_exercise(db, data["date"], exercise_name, weight_lbs, reps, sets)
     db.commit()
-    return jsonify({"ok": True}), 201
+    return jsonify({"ok": True, "exercise": dict(row)}), 201
 
 
 @app.route("/api/exercises/<int:eid>", methods=["DELETE"])
