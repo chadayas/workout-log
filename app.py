@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from flask import Flask, g, jsonify, render_template, request
 
 app = Flask(__name__)
-DB_PATH = os.path.join(os.path.expanduser("~"), "workout_log.db")
+DB_PATH = os.environ.get("WORKOUT_LOG_DB", os.path.join(os.path.expanduser("~"), "workout_log.db"))
 
 EXERCISE_MUSCLES = {
     "bench press": ["chest", "arms"],
@@ -65,6 +65,20 @@ def get_db():
                 body_weight_lbs REAL
             )
         """)
+        g.db.execute("""
+            CREATE TABLE IF NOT EXISTS food_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                food_name TEXT NOT NULL,
+                calories INTEGER NOT NULL CHECK (calories >= 0),
+                protein_g REAL NOT NULL CHECK (protein_g >= 0),
+                carbs_g REAL NOT NULL CHECK (carbs_g >= 0),
+                fat_g REAL NOT NULL CHECK (fat_g >= 0)
+            )
+        """)
+        g.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_food_entries_date ON food_entries(date)"
+        )
         g.db.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -127,16 +141,101 @@ def exercise_names():
     return jsonify(sorted(k.title() for k in EXERCISE_MUSCLES))
 
 
+# ---- Nutrition API ----
+
+def nutrition_for_date(db, log_date):
+    totals = db.execute(
+        """SELECT COUNT(*) AS entry_count,
+                  COALESCE(SUM(calories), 0) AS calories,
+                  COALESCE(SUM(protein_g), 0) AS protein_g,
+                  COALESCE(SUM(carbs_g), 0) AS carbs_g,
+                  COALESCE(SUM(fat_g), 0) AS fat_g
+           FROM food_entries WHERE date=?""",
+        (log_date,),
+    ).fetchone()
+    return {
+        "entry_count": totals["entry_count"],
+        "calories": totals["calories"],
+        "protein_g": round(totals["protein_g"], 1),
+        "carbs_g": round(totals["carbs_g"], 1),
+        "fat_g": round(totals["fat_g"], 1),
+    }
+
+
+@app.route("/api/foods")
+def get_foods():
+    log_date = request.args.get("date", date.today().isoformat())
+    db = get_db()
+    rows = db.execute(
+        """SELECT id, food_name, calories, protein_g, carbs_g, fat_g
+           FROM food_entries WHERE date=? ORDER BY id""",
+        (log_date,),
+    ).fetchall()
+    return jsonify({
+        "entries": [dict(row) for row in rows],
+        "totals": nutrition_for_date(db, log_date),
+    })
+
+
+@app.route("/api/foods", methods=["POST"])
+def add_food():
+    data = request.get_json()
+    required = ("date", "food_name", "calories", "protein_g", "carbs_g", "fat_g")
+    if not data or any(key not in data for key in required):
+        return jsonify({"error": "date, food_name, calories, protein_g, carbs_g, and fat_g are required"}), 400
+
+    food_name = str(data["food_name"]).strip()
+    if not food_name:
+        return jsonify({"error": "food_name cannot be empty"}), 400
+    try:
+        calories = int(data["calories"])
+        protein_g = float(data["protein_g"])
+        carbs_g = float(data["carbs_g"])
+        fat_g = float(data["fat_g"])
+        date.fromisoformat(data["date"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid nutrition values or date"}), 400
+    if min(calories, protein_g, carbs_g, fat_g) < 0:
+        return jsonify({"error": "nutrition values cannot be negative"}), 400
+
+    db = get_db()
+    cursor = db.execute(
+        """INSERT INTO food_entries
+           (date, food_name, calories, protein_g, carbs_g, fat_g)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (data["date"], food_name, calories, protein_g, carbs_g, fat_g),
+    )
+    db.commit()
+    return jsonify({"ok": True, "id": cursor.lastrowid}), 201
+
+
+@app.route("/api/foods/<int:food_id>", methods=["DELETE"])
+def delete_food(food_id):
+    db = get_db()
+    db.execute("DELETE FROM food_entries WHERE id=?", (food_id,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 # ---- Daily Stats API ----
 
 @app.route("/api/daily")
 def get_daily():
-    d = request.args.get("date", date.today().isoformat())
+    log_date = request.args.get("date", date.today().isoformat())
     db = get_db()
-    row = db.execute("SELECT calories, body_weight_lbs FROM daily_log WHERE date=?", (d,)).fetchone()
-    if row:
-        return jsonify({"calories": row["calories"], "body_weight_lbs": row["body_weight_lbs"]})
-    return jsonify({"calories": None, "body_weight_lbs": None})
+    row = db.execute(
+        "SELECT calories, body_weight_lbs FROM daily_log WHERE date=?", (log_date,)
+    ).fetchone()
+    nutrition = nutrition_for_date(db, log_date)
+    manual_calories = row["calories"] if row else None
+    return jsonify({
+        "calories": nutrition["calories"] if nutrition["entry_count"] else manual_calories,
+        "body_weight_lbs": row["body_weight_lbs"] if row else None,
+        "protein_g": nutrition["protein_g"],
+        "carbs_g": nutrition["carbs_g"],
+        "fat_g": nutrition["fat_g"],
+        "food_entry_count": nutrition["entry_count"],
+    })
 
 
 @app.route("/api/daily/weight", methods=["POST"])
@@ -169,7 +268,7 @@ def save_calories():
 
 # ---- Settings API ----
 
-DEFAULT_CALORIE_TARGET = 2000
+DEFAULT_CALORIE_TARGET = 2600
 
 
 @app.route("/api/settings/calorie-target")
@@ -207,6 +306,12 @@ def get_cutting():
     ).fetchall()
     weight_map = {r["date"]: r["body_weight_lbs"] for r in rows}
     cal_map = {r["date"]: r["calories"] for r in rows}
+    food_rows = db.execute(
+        """SELECT date, SUM(calories) AS calories
+           FROM food_entries WHERE date BETWEEN ? AND ? GROUP BY date""",
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+    cal_map.update({row["date"]: row["calories"] for row in food_rows})
 
     dates = [(start + timedelta(days=i)).isoformat() for i in range(30)]
     weights = [weight_map.get(d) for d in dates]
@@ -285,6 +390,17 @@ def get_weekly():
         (days[0], days[-1]),
     ).fetchall()
     daily_map = {r["date"]: dict(r) for r in daily_rows}
+    food_rows = db.execute(
+        """SELECT date, SUM(calories) AS calories
+           FROM food_entries WHERE date BETWEEN ? AND ? GROUP BY date""",
+        (days[0], days[-1]),
+    ).fetchall()
+    for row in food_rows:
+        daily_map.setdefault(
+            row["date"],
+            {"date": row["date"], "calories": None, "body_weight_lbs": None},
+        )
+        daily_map[row["date"]]["calories"] = row["calories"]
 
     daily = []
     for d in days:
