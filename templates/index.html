@@ -46,19 +46,101 @@
   /* status */
   .status { margin-top: 12px; padding: 10px; border-radius: 6px; background: #1a3a1a; color: #6fbf73;
             font-size: 14px; display: none; }
+
+  /* dashboard and chat */
+  .dashboard-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
+  .metric { background: #1a1a1a; border-radius: 8px; padding: 12px; }
+  .metric-label { color: #999; font-size: 12px; }
+  .metric-value { color: #4fc3f7; font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .progress-track { height: 10px; background: #333; border-radius: 5px; overflow: hidden; margin-top: 10px; }
+  .progress-fill { height: 100%; width: 0; background: #4fc3f7; transition: width .2s; }
+  .panel { background: #1a1a1a; border-radius: 8px; padding: 14px; margin-top: 14px; }
+  .panel-title { color: #aaa; font-size: 14px; margin-bottom: 8px; }
+  .chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto;
+              margin-bottom: 10px; }
+  .chat-empty { color: #777; font-size: 14px; }
+  .chat-bubble { max-width: 88%; padding: 9px 11px; border-radius: 10px; line-height: 1.35;
+                 white-space: pre-wrap; font-size: 14px; }
+  .chat-bubble.user { align-self: flex-end; background: #0d5270; }
+  .chat-bubble.assistant { align-self: flex-start; background: #292929; }
+  .chat-compose { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
+  textarea { width: 100%; min-height: 72px; resize: vertical; padding: 10px; border: 1px solid #333;
+             border-radius: 6px; background: #1e1e1e; color: #e0e0e0; font: inherit; }
+  textarea:focus { outline: none; border-color: #4fc3f7; }
+  .mic-btn { width: 48px; height: 48px; margin: 0; padding: 0; background: #333; color: #fff;
+             font-size: 20px; }
+  .mic-btn.listening { background: #e53935; }
+  .chat-send { margin-top: 8px; }
+  .chat-error { color: #ef9a9a; font-size: 13px; margin-top: 8px; min-height: 18px; }
+  .compact-table td, .compact-table th { padding: 7px 5px; }
+  @media (max-width: 420px) {
+    .tabs { overflow-x: auto; }
+    .tab-btn { min-width: 92px; }
+  }
 </style>
 </head>
 <body>
 
 <div class="tabs">
-  <button class="tab-btn active" onclick="switchTab('workout')">Log Workout</button>
+  <button class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
+  <button class="tab-btn" onclick="switchTab('workout')">Log Workout</button>
   <button class="tab-btn" onclick="switchTab('daily')">Daily Stats</button>
   <button class="tab-btn" onclick="switchTab('weekly')">Weekly</button>
   <button class="tab-btn" onclick="switchTab('cutting')">Cutting</button>
 </div>
 
+<!-- ============ DASHBOARD + GPT CHAT ============ -->
+<div id="tab-dashboard" class="tab-content active">
+  <label>Date</label>
+  <input type="date" id="dashboard-date">
+
+  <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div class="panel-title" style="margin:0">Calories</div>
+      <div id="dashboard-calories" style="font-weight:600">0 / 2600 kcal</div>
+    </div>
+    <div class="progress-track"><div id="dashboard-calorie-progress" class="progress-fill"></div></div>
+  </div>
+
+  <div class="dashboard-grid">
+    <div class="metric"><div class="metric-label">Protein</div><div id="dashboard-protein" class="metric-value">0 g</div></div>
+    <div class="metric"><div class="metric-label">Carbs</div><div id="dashboard-carbs" class="metric-value">0 g</div></div>
+    <div class="metric"><div class="metric-label">Fat</div><div id="dashboard-fat" class="metric-value">0 g</div></div>
+    <div class="metric"><div class="metric-label">Body Weight</div><div id="dashboard-weight" class="metric-value">—</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">GPT Fitness Log</div>
+    <div id="chat-log" class="chat-log">
+      <div class="chat-empty">Try “I ate a chicken burrito bowl” or “1 set bench press at 225 for 10.”</div>
+    </div>
+    <div class="chat-compose">
+      <textarea id="chat-input" placeholder="Log food, weight, or a workout…" enterkeyhint="send"></textarea>
+      <button id="mic-button" class="mic-btn" onclick="toggleVoice()" aria-label="Log by voice" title="Log by voice">Mic</button>
+    </div>
+    <button id="chat-send" class="btn-primary chat-send" onclick="sendChat()">Send</button>
+    <div id="chat-error" class="chat-error"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Food</div>
+    <table class="compact-table">
+      <thead><tr><th>Food</th><th>kcal</th><th>P / C / F</th><th></th></tr></thead>
+      <tbody id="dashboard-foods"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Workout</div>
+    <table class="compact-table">
+      <thead><tr><th>Exercise</th><th>Sets × Weight × Reps</th></tr></thead>
+      <tbody id="dashboard-workouts"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ============ LOG WORKOUT ============ -->
-<div id="tab-workout" class="tab-content active">
+<div id="tab-workout" class="tab-content">
   <label>Date</label>
   <input type="date" id="ex-date">
 
@@ -180,18 +262,195 @@
 <script>
 // ---- helpers ----
 const today = () => new Date().toISOString().slice(0,10);
-const api = (url, opts) => fetch(url, opts).then(r => r.json());
+async function api(url, opts) {
+  const response = await fetch(url, opts);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  return data;
+}
 
 // ---- tab switching ----
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', b.textContent.toLowerCase().includes(name.slice(0,4))));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
+  if (name === 'dashboard') loadDashboard();
   if (name === 'workout') { loadExercises(); loadExerciseNames(); }
   if (name === 'daily') { loadDaily(); loadWeightRolling(); }
   if (name === 'weekly') loadWeekly();
   if (name === 'cutting') { loadCutTarget(); loadCutDaily(); loadCutting(); }
 }
+
+// ---- DASHBOARD + GPT CHAT ----
+let chatHistory = [];
+let speechRecognition = null;
+
+function displayNumber(value) {
+  return Number(value || 0).toLocaleString(undefined, {maximumFractionDigits: 1});
+}
+
+function appendChatMessage(role, content) {
+  const log = document.getElementById('chat-log');
+  const empty = log.querySelector('.chat-empty');
+  if (empty) empty.remove();
+  const bubble = document.createElement('div');
+  bubble.className = `chat-bubble ${role}`;
+  bubble.textContent = content;
+  log.appendChild(bubble);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function loadDashboard() {
+  const logDate = document.getElementById('dashboard-date').value;
+  try {
+    const [foods, daily, target, workouts] = await Promise.all([
+      api(`/api/foods?date=${logDate}`),
+      api(`/api/daily?date=${logDate}`),
+      api('/api/settings/calorie-target'),
+      api(`/api/exercises?date=${logDate}`),
+    ]);
+    const calories = foods.totals.entry_count ? foods.totals.calories : (daily.calories || 0);
+    document.getElementById('dashboard-calories').textContent =
+      `${displayNumber(calories)} / ${displayNumber(target.calorie_target)} kcal`;
+    document.getElementById('dashboard-calorie-progress').style.width =
+      `${Math.min(100, calories / target.calorie_target * 100)}%`;
+    document.getElementById('dashboard-protein').textContent = `${displayNumber(daily.protein_g)} g`;
+    document.getElementById('dashboard-carbs').textContent = `${displayNumber(daily.carbs_g)} g`;
+    document.getElementById('dashboard-fat').textContent = `${displayNumber(daily.fat_g)} g`;
+    document.getElementById('dashboard-weight').textContent =
+      daily.body_weight_lbs ? `${displayNumber(daily.body_weight_lbs)} lbs` : '—';
+
+    const foodBody = document.getElementById('dashboard-foods');
+    foodBody.innerHTML = '';
+    if (!foods.entries.length) {
+      foodBody.innerHTML = '<tr><td colspan="4" style="color:#777">No food logged.</td></tr>';
+    } else {
+      for (const food of foods.entries) {
+        const row = document.createElement('tr');
+        const name = document.createElement('td');
+        name.textContent = food.food_name;
+        const caloriesCell = document.createElement('td');
+        caloriesCell.textContent = food.calories;
+        const macros = document.createElement('td');
+        macros.textContent = `${displayNumber(food.protein_g)} / ${displayNumber(food.carbs_g)} / ${displayNumber(food.fat_g)}`;
+        const controls = document.createElement('td');
+        const remove = document.createElement('button');
+        remove.className = 'btn-danger';
+        remove.textContent = 'X';
+        remove.onclick = () => deleteFood(food.id);
+        controls.appendChild(remove);
+        row.append(name, caloriesCell, macros, controls);
+        foodBody.appendChild(row);
+      }
+    }
+
+    const workoutBody = document.getElementById('dashboard-workouts');
+    workoutBody.innerHTML = '';
+    if (!workouts.length) {
+      workoutBody.innerHTML = '<tr><td colspan="2" style="color:#777">No workout logged.</td></tr>';
+    } else {
+      for (const workout of workouts) {
+        const row = document.createElement('tr');
+        const name = document.createElement('td');
+        name.textContent = workout.exercise_name;
+        const prescription = document.createElement('td');
+        prescription.textContent =
+          `${workout.sets} × ${displayNumber(workout.weight_lbs)} lbs × ${workout.reps}`;
+        row.append(name, prescription);
+        workoutBody.appendChild(row);
+      }
+    }
+    document.getElementById('chat-error').textContent = '';
+  } catch (error) {
+    document.getElementById('chat-error').textContent = error.message;
+  }
+}
+
+async function deleteFood(id) {
+  try {
+    await api(`/api/foods/${id}`, {method: 'DELETE'});
+    loadDashboard();
+  } catch (error) {
+    document.getElementById('chat-error').textContent = error.message;
+  }
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const message = input.value.trim();
+  if (!message) return;
+  const sendButton = document.getElementById('chat-send');
+  const priorHistory = chatHistory.slice(-10);
+  chatHistory.push({role: 'user', content: message});
+  appendChatMessage('user', message);
+  input.value = '';
+  sendButton.disabled = true;
+  sendButton.textContent = 'Working…';
+  document.getElementById('chat-error').textContent = '';
+  try {
+    const result = await api('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        message,
+        date: document.getElementById('dashboard-date').value,
+        history: priorHistory,
+      }),
+    });
+    chatHistory.push({role: 'assistant', content: result.reply});
+    appendChatMessage('assistant', result.reply);
+    await loadDashboard();
+  } catch (error) {
+    document.getElementById('chat-error').textContent = error.message;
+    appendChatMessage('assistant', `Could not log that: ${error.message}`);
+  } finally {
+    sendButton.disabled = false;
+    sendButton.textContent = 'Send';
+  }
+}
+
+function toggleVoice() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const error = document.getElementById('chat-error');
+  if (!Recognition) {
+    error.textContent = 'Voice input is not supported by this browser. You can still type the entry.';
+    return;
+  }
+  if (speechRecognition) {
+    speechRecognition.stop();
+    return;
+  }
+  speechRecognition = new Recognition();
+  speechRecognition.lang = 'en-US';
+  speechRecognition.interimResults = false;
+  speechRecognition.maxAlternatives = 1;
+  const mic = document.getElementById('mic-button');
+  mic.classList.add('listening');
+  mic.textContent = 'Stop';
+  error.textContent = 'Listening…';
+  speechRecognition.onresult = event => {
+    document.getElementById('chat-input').value = event.results[0][0].transcript;
+    error.textContent = '';
+    sendChat();
+  };
+  speechRecognition.onerror = event => {
+    error.textContent = `Voice input failed: ${event.error}`;
+  };
+  speechRecognition.onend = () => {
+    speechRecognition = null;
+    mic.classList.remove('listening');
+    mic.textContent = 'Mic';
+  };
+  speechRecognition.start();
+}
+
+document.getElementById('dashboard-date').addEventListener('change', loadDashboard);
+document.getElementById('chat-input').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendChat();
+  }
+});
 
 // ---- LOG WORKOUT ----
 async function loadExerciseNames() {
@@ -598,10 +857,11 @@ async function loadCutting() {
 }
 
 // ---- init ----
+document.getElementById('dashboard-date').value = today();
 document.getElementById('ex-date').value = today();
 document.getElementById('cut-date').value = today();
 document.getElementById('daily-date').value = today();
-loadExercises();
+loadDashboard();
 loadExerciseNames();
 </script>
 </body>
