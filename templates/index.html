@@ -282,7 +282,11 @@
 
 <script>
 // ---- helpers ----
-const today = () => new Date().toISOString().slice(0,10);
+const today = () => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 10);
+};
 async function api(url, opts = {}) {
   const headers = new Headers(opts.headers || {});
   const token = localStorage.getItem('workoutLogApiToken');
